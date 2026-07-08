@@ -1,3 +1,21 @@
 .env
 .env.*
 !.env.example
+
+compose.rendered.yml
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+
+# Build
+*.log
+
+# Secrets
+secrets/*
+!secrets/.gitkeep
