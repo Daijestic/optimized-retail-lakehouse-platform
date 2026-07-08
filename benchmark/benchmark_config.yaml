@@ -1,0 +1,311 @@
+# benchmark/benchmark_config.yaml
+# Cấu hình benchmark cho project:
+# "Xây dựng và đánh giá nền tảng Lakehouse tối ưu hiệu năng
+# cho phân tích dữ liệu bán lẻ/thanh toán gần thời gian thực"
+#
+# Mục tiêu của file này:
+# - Cố định seed, data volume, Spark config, table layout và query để benchmark có thể tái lập.
+# - Tránh so sánh cảm tính giữa các experiment có input/config khác nhau.
+# - Hỗ trợ 2 benchmark MVP: full refresh vs incremental, small files vs compaction.
+# - Để sẵn cấu hình stretch goals: partition benchmark và Spark AQE benchmark.
+
+project:
+  name: optimized-retail-lakehouse-platform
+  description: Lakehouse platform benchmark for near real-time retail/payment analytics
+  environment: local
+  processing_mode: micro_batch_near_real_time
+  target_latency_minutes:
+    min: 1
+    max: 5
+  table_format_mvp: delta_lake
+  storage: minio
+  orchestration: airflow
+  dashboard: streamlit
+
+metadata:
+  save_run_metadata: true
+  metadata_database: postgresql
+  required_fields:
+    - run_id
+    - experiment_name
+    - strategy_name
+    - run_number
+    - random_seed
+    - data_volume
+    - spark_config_hash
+    - table_layout
+    - query_name
+    - query_hash
+    - correctness_status
+    - created_at
+
+paths:
+  bronze_path: s3a://lakehouse/bronze/retail_events/
+  silver_path: s3a://lakehouse/silver/
+  gold_path: s3a://lakehouse/gold/
+  benchmark_results_path: benchmark/results/
+  benchmark_summary_file: benchmark/results/benchmark_summary.csv
+  incremental_results_file: benchmark/results/incremental_benchmark_results.csv
+  compaction_results_file: benchmark/results/compaction_benchmark_results.csv
+  partition_results_file: benchmark/results/partition_benchmark_results.csv
+  aqe_results_file: benchmark/results/aqe_benchmark_results.csv
+
+storage:
+  minio:
+    endpoint: http://localhost:9000
+    bucket: lakehouse
+    access_key_env: MINIO_ACCESS_KEY
+    secret_key_env: MINIO_SECRET_KEY
+    path_style_access: true
+
+kafka:
+  bootstrap_servers: localhost:9092
+  topic: retail_events
+  consumer_group: lakehouse_benchmark_consumer
+  source_metadata_fields:
+    - source_topic
+    - source_partition
+    - source_offset
+
+producer:
+  random_seed: 42
+  data_volume: 1000000
+  batch_size: 10000
+  duplicate_rate: 0.05
+  late_event_rate: 0.03
+  malformed_rate: 0.01
+  negative_amount_rate: 0.005
+  unsupported_schema_version_rate: 0.005
+  skew_mode: none
+  supported_schema_versions:
+    - v1
+  event_types:
+    - order_created
+    - payment_authorized
+    - payment_failed
+    - refund_requested
+    - order_cancelled
+  currencies:
+    - VND
+    - USD
+
+streaming:
+  mode: micro_batch
+  trigger_interval_seconds: 60
+  allowed_lateness_minutes: 30
+  watermark_column: event_time
+  checkpoint_base_path: s3a://lakehouse/checkpoints/
+  output_mode: append
+
+spark:
+  app_name: optimized-retail-lakehouse-benchmark
+  master: local[*]
+  sql_shuffle_partitions: 200
+  adaptive_enabled: true
+  auto_broadcast_join_threshold: 10485760
+  driver_memory: 4g
+  executor_memory: 4g
+  extra_configs:
+    spark.sql.session.timeZone: UTC
+    spark.sql.parquet.compression.codec: snappy
+    spark.databricks.delta.schema.autoMerge.enabled: false
+    spark.sql.files.maxPartitionBytes: 134217728
+
+quality_rules:
+  event_id_not_null: true
+  event_id_unique_in_clean_output: true
+  event_type_must_be_supported: true
+  event_time_not_null: true
+  amount_must_be_non_negative: true
+  currency_allowed_values:
+    - VND
+    - USD
+  payment_id_required_for_payment_events: true
+  schema_version_must_be_supported: true
+  raw_payload_must_be_parseable: true
+  producer_time_before_event_time_policy: flag_as_suspicious
+
+correctness_checks:
+  require_before_benchmark: true
+  tests:
+    - duplicate_payment_authorized_does_not_increase_revenue
+    - malformed_events_do_not_enter_gold
+    - late_events_follow_allowed_lateness_policy
+    - payment_failure_rate_is_correct
+    - rerun_same_processing_date_is_idempotent
+
+benchmark_defaults:
+  repeat_runs: 3
+  warmup_runs: 1
+  save_min_avg_max_runtime: true
+  save_query_text: true
+  save_query_hash: true
+  save_spark_config: true
+  save_table_layout: true
+  save_data_profile: true
+  fixed_random_seed_required: true
+  compare_only_same_input_data: true
+  fail_if_correctness_fails: true
+  time_unit: seconds
+
+metrics:
+  required:
+    - run_id
+    - experiment_name
+    - strategy_name
+    - data_volume
+    - random_seed
+    - spark_config
+    - table_layout
+    - query_name
+    - query_hash
+    - run_number
+    - processing_time_seconds
+    - query_time_seconds
+    - rows_scanned
+    - rows_written
+    - file_count
+    - average_file_size_mb
+    - compaction_runtime_seconds
+    - correctness_status
+    - created_at
+  optional:
+    - shuffle_read_bytes
+    - shuffle_write_bytes
+    - num_shuffle_partitions
+    - affected_windows
+    - dlq_count
+    - duplicate_count
+    - late_event_count
+    - freshness_seconds
+
+experiments:
+  full_refresh_vs_incremental:
+    enabled: true
+    goal: Compare processing time and rows scanned between full refresh and incremental processing.
+    input_dataset:
+      random_seed: 42
+      data_volume: 1000000
+      duplicate_rate: 0.05
+      late_event_rate: 0.03
+      malformed_rate: 0.01
+    strategies:
+      full_refresh:
+        job: processing/full_refresh_job.py
+        read_scope: all_silver_clean_events
+        write_mode: overwrite_gold_tables
+        expected_correctness: pass
+      incremental:
+        job: processing/incremental_job.py
+        read_scope: new_or_affected_windows
+        write_mode: merge_into_gold_tables
+        unique_keys:
+          silver_clean_events: event_id
+          gold_payment_metrics_hourly:
+            - window_start
+            - currency
+        expected_correctness: pass
+    metrics:
+      - processing_time_seconds
+      - rows_scanned
+      - rows_written
+      - affected_windows
+      - correctness_status
+    acceptance_criteria:
+      full_refresh_correctness: pass
+      incremental_correctness: pass
+      rerun_incremental_same_input_idempotent: true
+
+  small_files_vs_compaction:
+    enabled: true
+    goal: Measure impact of small files and compaction on query time and file layout.
+    input_dataset:
+      random_seed: 42
+      data_volume: 1000000
+    strategies:
+      small_files:
+        job: benchmark/generate_benchmark_data.py
+        target_average_file_size_mb: 1
+        expected_file_count_behavior: high
+      compacted:
+        job: processing/compaction_job.py
+        target_average_file_size_mb: 128
+        expected_file_count_behavior: lower_than_small_files
+    query_workload:
+      - query_name: revenue_by_hour_for_one_day
+        query_file: sql/benchmark_queries.sql
+        query_hash_required: true
+      - query_name: payment_failure_rate_by_hour_for_one_day
+        query_file: sql/benchmark_queries.sql
+        query_hash_required: true
+    metrics:
+      - file_count
+      - average_file_size_mb
+      - query_time_seconds
+      - compaction_runtime_seconds
+      - correctness_status
+    acceptance_criteria:
+      compacted_file_count_less_than_small_files: true
+      compacted_average_file_size_greater_than_small_files: true
+      correctness_status: pass
+
+  partition_benchmark:
+    enabled: false
+    goal: Stretch goal. Compare query performance and small-file risk across partition strategies.
+    strategies:
+      no_partition:
+        partition_columns: []
+      event_date:
+        partition_columns:
+          - event_date
+      event_date_event_type:
+        partition_columns:
+          - event_date
+          - event_type
+    query_patterns:
+      - filter_by_event_date
+      - filter_by_event_date_and_event_type
+    metrics:
+      - query_time_seconds
+      - file_count
+      - average_file_size_mb
+      - partition_count
+      - correctness_status
+
+  aqe_benchmark:
+    enabled: false
+    goal: Stretch goal. Compare Spark SQL execution with AQE off and AQE on.
+    strategies:
+      aqe_off:
+        spark.sql.adaptive.enabled: false
+      aqe_on:
+        spark.sql.adaptive.enabled: true
+    metrics:
+      - processing_time_seconds
+      - query_time_seconds
+      - shuffle_read_bytes
+      - shuffle_write_bytes
+      - num_shuffle_partitions
+      - correctness_status
+    save_explain_plan: true
+
+reporting:
+  generate_summary_csv: true
+  generate_charts: true
+  charts:
+    - full_refresh_vs_incremental_runtime
+    - full_refresh_vs_incremental_rows_scanned
+    - small_files_vs_compaction_file_count
+    - small_files_vs_compaction_average_file_size
+    - small_files_vs_compaction_query_time
+    - small_files_vs_compaction_compaction_runtime
+  include_in_readme: true
+  include_tradeoff_notes: true
+
+tradeoffs_to_document:
+  - full_refresh_easy_correct_but_not_scalable
+  - incremental_faster_but_requires_idempotency_backfill_late_event_handling
+  - small_files_bad_for_query_performance
+  - compaction_improves_reads_but_adds_maintenance_cost
+  - synthetic_data_controlled_but_not_production_representative
+  - micro_batch_simpler_but_not_millisecond_real_time
