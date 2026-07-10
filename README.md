@@ -128,6 +128,74 @@ Lakehouse phù hợp với project này vì kết hợp được:
 | Testing | pytest | Unit/data/correctness tests |
 | CI nhẹ | GitHub Actions | Chạy tests và config checks |
 
+### 7.1. Kafka topic design
+
+Topic chính của project:
+
+| Thuộc tính | Giá trị |
+|---|---|
+| Topic name | `retail-payment-events` |
+| Partitions | `3` |
+| Replication factor | `1` |
+| Retention | `604800000 ms` — 7 ngày |
+| Cleanup policy | `delete` |
+| Record key mẫu | `order_id` |
+| Record value | JSON retail/payment event |
+
+Luồng dữ liệu tối thiểu trong Tuần 1:
+
+```text
+Synthetic producer
+        ↓
+retail-payment-events
+        ↓
+Kafka CLI consumer
+```
+
+#### Bootstrap servers
+
+Tùy vị trí chạy client, địa chỉ Kafka khác nhau:
+
+| Client | Bootstrap server |
+|---|---|
+| Ứng dụng chạy trên Windows host | `localhost:9092` |
+| Service chạy trong Docker network | `kafka:19092` |
+| Kafka CLI chạy trong Kafka container | `localhost:19092` |
+
+Không sử dụng IP container cố định vì IP có thể thay đổi sau khi container được tạo lại.
+
+#### Partition strategy
+
+Topic sử dụng `3` partition để:
+
+- minh họa cơ chế phân vùng dữ liệu;
+- chuẩn bị cho consumer group và xử lý song song;
+- cho phép các event có cùng key được định tuyến ổn định;
+- chuẩn bị cho Spark Structured Streaming ở các tuần sau.
+
+Trong MVP, `order_id` được dùng làm Kafka record key mẫu. Các event của cùng một đơn hàng thường được đưa vào cùng partition, giúp duy trì thứ tự của chúng trong partition đó.
+
+Kafka chỉ bảo đảm thứ tự record trong cùng một partition, không bảo đảm thứ tự trên toàn bộ topic.
+
+#### Retention và local limitation
+
+Project local chỉ chạy một Kafka broker nên:
+
+```text
+replication.factor = 1
+```
+
+Cấu hình này phù hợp với môi trường học tập và phát triển local nhưng không cung cấp high availability. Trong production cần nhiều broker và replication factor lớn hơn `1`.
+
+Topic sử dụng:
+
+```text
+cleanup.policy = delete
+retention.ms = 604800000
+```
+
+Kafka giữ event trong thời gian retention, kể cả khi consumer đã đọc. Bronze layer mới là nơi lưu raw data lâu dài để phục vụ audit và replay.
+
 ## 8. Bronze/Silver/Gold design
 
 ### 8.1. Bronze Layer
@@ -510,13 +578,172 @@ optimized-retail-lakehouse-platform/
 
 ## 20. Cách chạy local
 
-Phần này sẽ được hoàn thiện ở các tuần sau.
+### 20.1. Yêu cầu
 
-Dự kiến:
+- Docker Desktop và Docker Compose;
+- Git;
+- Python 3.11 cho các script chạy trên host;
+- PowerShell hoặc Git Bash trên Windows.
+
+### 20.2. Chuẩn bị biến môi trường
+
+Tạo file `.env` từ file mẫu:
 
 ```bash
-make up
-make init
+cp .env.example .env
+```
+
+Điền credential local trong `.env`. Không commit `.env` hoặc các file password được sinh trong `orchestration/config/`.
+
+Kiểm tra cấu hình Compose:
+
+```bash
+docker compose config
+```
+
+### 20.3. Khởi động local infrastructure
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+Các endpoint mặc định:
+
+| Service | Endpoint |
+|---|---|
+| Kafka trên host | `localhost:9092` |
+| PostgreSQL | `localhost:5432` |
+| MinIO S3 API | `http://localhost:9000` |
+| MinIO Console | `http://localhost:9001` |
+| Spark Master UI | `http://localhost:8080` |
+| Airflow UI | `http://localhost:8088` |
+| Streamlit | `http://localhost:8501` |
+
+Port thực tế có thể được thay đổi trong `.env`.
+
+### 20.4. Khởi tạo MinIO và kiểm tra PostgreSQL
+
+Tạo bucket `lakehouse` và chạy S3 put/get smoke test:
+
+```bash
+python scripts/create_buckets.py
+```
+
+Kiểm tra các bảng metadata PostgreSQL:
+
+```bash
+docker compose exec postgres \
+  psql \
+  -U "$POSTGRES_USER" \
+  -d "$POSTGRES_DB" \
+  -c "\dt"
+```
+
+Nếu Git Bash chưa nạp biến từ `.env`:
+
+```bash
+set -a
+source .env
+set +a
+```
+
+Các bảng metadata tối thiểu của Tuần 1:
+
+```text
+pipeline_runs
+data_quality_results
+benchmark_runs
+```
+
+### 20.5. Khởi tạo Kafka topic
+
+Tạo hoặc đồng bộ cấu hình topic:
+
+```bash
+make create-topics
+```
+
+Kiểm tra topic:
+
+```bash
+make describe-topic
+```
+
+Kết quả mong đợi:
+
+```text
+Topic: retail-payment-events
+PartitionCount: 3
+ReplicationFactor: 1
+retention.ms=604800000
+cleanup.policy=delete
+```
+
+### 20.6. Kafka smoke test
+
+Gửi một JSON event mẫu có record key:
+
+```bash
+make kafka-produce-sample
+```
+
+Đọc event và hiển thị key, timestamp, partition và offset:
+
+```bash
+make kafka-consume-sample
+```
+
+Hoặc chạy toàn bộ Kafka smoke test:
+
+```bash
+make kafka-smoke
+```
+
+Với Kafka CLI phiên bản mới:
+
+- `kafka-console-producer.sh` dùng `--reader-property`;
+- `kafka-console-consumer.sh` dùng `--formatter-property`;
+- không dùng `--property` vì tùy chọn này đã deprecated.
+
+### 20.7. Kiểm tra các service
+
+```bash
+docker compose ps
+docker compose logs --tail 100 kafka
+docker compose logs --tail 100 minio
+docker compose logs --tail 100 postgres
+docker compose logs --tail 100 airflow
+```
+
+Kiểm tra Kafka KRaft quorum trong Git Bash:
+
+```bash
+MSYS_NO_PATHCONV=1 docker compose exec -T kafka \
+  /opt/kafka/bin/kafka-metadata-quorum.sh \
+  --bootstrap-server localhost:19092 \
+  describe --status
+```
+
+### 20.8. Dừng hoặc reset môi trường
+
+Dừng container nhưng giữ dữ liệu:
+
+```bash
+docker compose down
+```
+
+Xóa toàn bộ container và named volume:
+
+```bash
+docker compose down -v
+```
+
+> Cảnh báo: `docker compose down -v` xóa dữ liệu Kafka, PostgreSQL và MinIO đang lưu trong named volumes.
+
+### 20.9. Các command sẽ được bổ sung ở các tuần sau
+
+```bash
 make generate-events
 make ingest-bronze
 make process-silver
@@ -524,6 +751,8 @@ make build-gold
 make run-benchmarks
 make dashboard
 ```
+
+Các command này thuộc các giai đoạn producer hoàn chỉnh, Bronze, Silver, Gold, benchmark và monitoring; chúng chưa phải Definition of Done của Ngày 4.
 
 ## 21. Definition of Done cho MVP
 
@@ -566,8 +795,13 @@ Sau MVP, có thể mở rộng:
 ## 23. Tài liệu tham khảo
 
 - Apache Kafka Documentation: https://kafka.apache.org/documentation/
-- Spark Structured Streaming Programming Guide: https://spark.apache.org/docs/3.5.6/structured-streaming-programming-guide.html
+- Apache Kafka Topic Configs: https://kafka.apache.org/43/configuration/topic-configs/
+- Apache Kafka Upgrade Guide: https://kafka.apache.org/43/getting-started/upgrade/
+- Docker Compose Specification: https://docs.docker.com/reference/compose-file/
+- Spark Structured Streaming Programming Guide: https://spark.apache.org/docs/3.5.8/structured-streaming-programming-guide.html
+- Delta Lake Compatibility Matrix: https://docs.delta.io/releases/
 - Delta Lake Documentation: https://docs.delta.io/
-- Apache Airflow DAGs Documentation: https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/dags.html
+- Apache Airflow Core Concepts: https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/
+- Apache Airflow Simple Auth Manager: https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/auth-manager/simple/
 - Databricks Medallion Architecture: https://www.databricks.com/blog/what-is-medallion-architecture
 - Streamlit Documentation: https://docs.streamlit.io/
