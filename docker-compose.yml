@@ -129,6 +129,109 @@ services:
       start_period: 30s
     networks:
       - lakehouse_network
+  
+  airflow:
+    image: ${AIRFLOW_IMAGE}
+    hostname: airflow
+
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+
+      # Khai báo user và role cho Simple Auth Manager
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: "${AIRFLOW_ADMIN_USERNAME}:admin"
+
+      # Chỉ định file chứa password
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: >-
+        /opt/airflow/config/simple_auth_manager_passwords.json
+
+      AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+
+    command:
+      - bash
+      - -c
+      - |
+        python - <<'PY'
+        import json
+        import os
+        from pathlib import Path
+
+        username = os.environ["AIRFLOW_ADMIN_USERNAME"]
+        password = os.environ["AIRFLOW_ADMIN_PASSWORD"]
+
+        path = Path(
+            "/opt/airflow/config/simple_auth_manager_passwords.json"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({username: password}),
+            encoding="utf-8",
+        )
+        PY
+
+        exec airflow standalone
+
+    ports:
+      - "${AIRFLOW_WEB_PORT:-8088}:8080"
+
+    volumes:
+      - ./orchestration/dags:/opt/airflow/dags
+      - ./orchestration/logs:/opt/airflow/logs
+      - ./orchestration/plugins:/opt/airflow/plugins
+      - ./orchestration/config:/opt/airflow/config
+
+    user: "${AIRFLOW_UID:-50000}:0"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    networks:
+      - lakehouse_network
+
+    restart: unless-stopped
+
+  spark:
+    image: ${SPARK_IMAGE}
+    hostname: spark
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+      --host spark
+      --port 7077
+      --webui-port 8080
+    ports:
+      - "${SPARK_MASTER_WEBUI_PORT:-8080}:8080"
+      - "${SPARK_MASTER_PORT:-7077}:7077"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - lakehouse_network
+
+  streamlit:
+    image: ${STREAMLIT_IMAGE}
+    hostname: streamlit
+    working_dir: /app
+    command: >
+      sh -c "pip install --no-cache-dir streamlit &&
+             streamlit run monitoring/dashboard.py
+             --server.address=0.0.0.0
+             --server.port=8501"
+    ports:
+      - "${STREAMLIT_PORT:-8501}:8501"
+    volumes:
+      - ./monitoring:/app/monitoring:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - lakehouse_network
 
 networks:
   lakehouse_network:

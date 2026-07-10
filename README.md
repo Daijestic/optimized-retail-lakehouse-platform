@@ -50,7 +50,7 @@ Synthetic Retail / Payment Events
 Producer
 valid + duplicate + late + malformed events
         ↓
-Kafka / Redpanda
+Kafka
 Event streaming layer
         ↓
 Bronze Layer
@@ -86,7 +86,7 @@ Mục tiêu latency:
 1–5 phút
 ```
 
-Điều này nghĩa là dữ liệu được đọc liên tục từ Kafka/Redpanda nhưng được xử lý theo các batch nhỏ. Project không claim xử lý từng event ở mức millisecond.
+Điều này nghĩa là dữ liệu được đọc liên tục từ Apache Kafka KRaft nhưng được xử lý theo các batch nhỏ. Project không claim xử lý từng event ở mức millisecond.
 
 Lý do chọn micro-batch:
 
@@ -117,7 +117,7 @@ Lakehouse phù hợp với project này vì kết hợp được:
 | Thành phần | Công nghệ | Vai trò |
 |---|---|---|
 | Local environment | Docker Compose | Chạy nhiều service local |
-| Event streaming | Kafka/Redpanda | Mô phỏng event stream |
+| Event streaming | Apache Kafka KRaft | Mô phỏng event stream |
 | Producer | Python | Sinh synthetic events |
 | Object storage | MinIO | Mô phỏng S3-compatible storage |
 | Processing | Spark/PySpark | Xử lý Bronze → Silver → Gold |
@@ -132,7 +132,7 @@ Lakehouse phù hợp với project này vì kết hợp được:
 
 ### 8.1. Bronze Layer
 
-Bronze lưu raw immutable events từ Kafka/Redpanda.
+Bronze lưu raw immutable events từ Apache Kafka KRaft.
 
 Bronze không sửa dữ liệu, không drop duplicate, không sửa schema lỗi.
 
@@ -528,7 +528,7 @@ make dashboard
 ## 21. Definition of Done cho MVP
 
 - [ ] Producer sinh valid/duplicate/late/malformed events
-- [ ] Kafka/Redpanda nhận events
+- [ ] Apache Kafka KRaft nhận events
 - [ ] Bronze immutable + replay guide
 - [ ] Silver có data quality checks
 - [ ] Silver có deduplication

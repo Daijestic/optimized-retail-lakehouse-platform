@@ -1,3 +1,4 @@
+# Environment
 .env
 .env.*
 !.env.example
@@ -7,15 +8,53 @@ compose.rendered.yml
 # Python
 .venv/
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Python packaging
+build/
+dist/
+*.egg-info/
 
 # IDE
 .vscode/
 .idea/
 
-# Build
+# Operating system
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
 *.log
+logs/
+tmp/
 
 # Secrets
 secrets/*
 !secrets/.gitkeep
+
+# Airflow runtime
+orchestration/logs/*
+!orchestration/logs/.gitkeep
+
+orchestration/plugins/*
+!orchestration/plugins/.gitkeep
+
+orchestration/config/*
+!orchestration/config/.gitkeep
+
+# Spark runtime
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
