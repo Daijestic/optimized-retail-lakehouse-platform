@@ -1,0 +1,1 @@
+"""Synthetic retail and payment event producer package."""

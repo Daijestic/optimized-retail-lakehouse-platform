@@ -1,0 +1,139 @@
+{
+  "$defs": {
+    "Currency": {
+      "description": "Các đơn vị tiền tệ được MVP hỗ trợ.",
+      "enum": [
+        "VND",
+        "USD"
+      ],
+      "title": "Currency",
+      "type": "string"
+    },
+    "EventType": {
+      "description": "Các loại event được hỗ trợ trong schema version 1.0.",
+      "enum": [
+        "order_created",
+        "order_confirmed",
+        "payment_authorized",
+        "payment_failed",
+        "order_shipped",
+        "order_delivered",
+        "refund_requested"
+      ],
+      "title": "EventType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Schema version 1.0 cho retail/payment event hợp lệ.",
+  "properties": {
+    "event_id": {
+      "format": "uuid",
+      "title": "Event Id",
+      "type": "string"
+    },
+    "event_type": {
+      "$ref": "#/$defs/EventType"
+    },
+    "order_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Order Id",
+      "type": "string"
+    },
+    "payment_id": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Payment Id"
+    },
+    "customer_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Customer Id",
+      "type": "string"
+    },
+    "store_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Store Id",
+      "type": "string"
+    },
+    "amount": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,16}|(?=[\\d.]{1,19}0*$)\\d{0,16}\\.\\d{0,2}0*$)",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Amount"
+    },
+    "currency": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Currency"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "event_time": {
+      "format": "date-time",
+      "title": "Event Time",
+      "type": "string"
+    },
+    "producer_time": {
+      "format": "date-time",
+      "title": "Producer Time",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "idempotency_key": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Idempotency Key",
+      "type": "string"
+    },
+    "source": {
+      "const": "synthetic-retail-producer",
+      "default": "synthetic-retail-producer",
+      "title": "Source",
+      "type": "string"
+    }
+  },
+  "required": [
+    "event_id",
+    "event_type",
+    "order_id",
+    "customer_id",
+    "store_id",
+    "event_time",
+    "producer_time",
+    "idempotency_key"
+  ],
+  "title": "RetailPaymentEvent",
+  "type": "object"
+}
