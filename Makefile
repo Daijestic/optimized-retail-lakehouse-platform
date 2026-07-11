@@ -84,4 +84,91 @@ test-event-schema:
 	python -m pytest -q tests/test_event_schema.py
 
 export-event-schema:
-	python -m scripts/export_event_schema.py
+	python -m scripts.export_event_schema
+
+.PHONY: \
+	test \
+	test-bad-events \
+	producer-dry-run \
+	producer-fixed-seed \
+	producer-seed-difference \
+	producer-run \
+	producer-consume
+
+test:
+	python -m pytest -q
+
+test-bad-events:
+	python -m pytest -q tests/test_bad_events.py
+
+producer-dry-run:
+	mkdir -p artifacts/day06
+	python -m producer.event_producer \
+		--dry-run \
+		--seed 42 \
+		--data-volume 100 \
+		--output artifacts/day06/events-seed-42.jsonl
+
+producer-fixed-seed:
+	mkdir -p artifacts/day06
+	python -m producer.event_producer \
+		--dry-run \
+		--seed 42 \
+		--data-volume 100 \
+		--output artifacts/day06/events-a.jsonl
+	python -m producer.event_producer \
+		--dry-run \
+		--seed 42 \
+		--data-volume 100 \
+		--output artifacts/day06/events-b.jsonl
+	sha256sum \
+		artifacts/day06/events-a.jsonl \
+		artifacts/day06/events-b.jsonl
+	cmp -s \
+		artifacts/day06/events-a.jsonl \
+		artifacts/day06/events-b.jsonl
+	@echo "PASS: same seed generated identical files"
+
+producer-seed-difference:
+	mkdir -p artifacts/day06
+	python -m producer.event_producer \
+		--dry-run \
+		--seed 42 \
+		--data-volume 100 \
+		--output artifacts/day06/events-seed-42.jsonl
+	python -m producer.event_producer \
+		--dry-run \
+		--seed 43 \
+		--data-volume 100 \
+		--output artifacts/day06/events-seed-43.jsonl
+	sha256sum \
+		artifacts/day06/events-seed-42.jsonl \
+		artifacts/day06/events-seed-43.jsonl
+	@if cmp -s \
+		artifacts/day06/events-seed-42.jsonl \
+		artifacts/day06/events-seed-43.jsonl; then \
+		echo "FAIL: different seeds generated identical files"; \
+		exit 1; \
+	else \
+		echo "PASS: different seeds generated different files"; \
+	fi
+
+producer-run: create-topics
+	python -m producer.event_producer \
+		--seed 42 \
+		--data-volume 100 \
+		--bootstrap-servers localhost:9092 \
+		--topic retail-payment-events
+
+producer-consume:
+	MSYS_NO_PATHCONV=1 docker compose exec -T kafka \
+		/opt/kafka/bin/kafka-console-consumer.sh \
+		--bootstrap-server localhost:19092 \
+		--topic retail-payment-events \
+		--from-beginning \
+		--max-messages 20 \
+		--timeout-ms 10000 \
+		--formatter-property "print.key=true" \
+		--formatter-property "print.timestamp=true" \
+		--formatter-property "print.partition=true" \
+		--formatter-property "print.offset=true"
