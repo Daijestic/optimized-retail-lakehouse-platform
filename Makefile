@@ -102,63 +102,25 @@ test-bad-events:
 	python -m pytest -q tests/test_bad_events.py
 
 producer-dry-run:
-	mkdir -p artifacts/day06
-	python -m producer.event_producer \
-		--dry-run \
-		--seed 42 \
-		--data-volume 100 \
-		--output artifacts/day06/events-seed-42.jsonl
+	python -c "from pathlib import Path; Path('artifacts/day06').mkdir(parents=True, exist_ok=True)"
+	python -m producer.event_producer --dry-run --seed 42 --data-volume 100 --output artifacts/day06/events-seed-42.jsonl
 
 producer-fixed-seed:
-	mkdir -p artifacts/day06
-	python -m producer.event_producer \
-		--dry-run \
-		--seed 42 \
-		--data-volume 100 \
-		--output artifacts/day06/events-a.jsonl
-	python -m producer.event_producer \
-		--dry-run \
-		--seed 42 \
-		--data-volume 100 \
-		--output artifacts/day06/events-b.jsonl
-	sha256sum \
-		artifacts/day06/events-a.jsonl \
-		artifacts/day06/events-b.jsonl
-	cmp -s \
-		artifacts/day06/events-a.jsonl \
-		artifacts/day06/events-b.jsonl
-	@echo "PASS: same seed generated identical files"
+	python -c "from pathlib import Path; Path('artifacts/day06').mkdir(parents=True, exist_ok=True)"
+	python -m producer.event_producer --dry-run --seed 42 --data-volume 100 --output artifacts/day06/events-a.jsonl
+	python -m producer.event_producer --dry-run --seed 42 --data-volume 100 --output artifacts/day06/events-b.jsonl
+	python -c "from pathlib import Path; import hashlib; paths=['artifacts/day06/events-a.jsonl','artifacts/day06/events-b.jsonl']; [print(hashlib.sha256(Path(path).read_bytes()).hexdigest() + '  ' + path) for path in paths]"
+	python -c "from pathlib import Path; import sys; same=Path('artifacts/day06/events-a.jsonl').read_bytes() == Path('artifacts/day06/events-b.jsonl').read_bytes(); print('PASS: same seed generated identical files' if same else 'FAIL: same seed generated different files'); sys.exit(0 if same else 1)"
 
 producer-seed-difference:
-	mkdir -p artifacts/day06
-	python -m producer.event_producer \
-		--dry-run \
-		--seed 42 \
-		--data-volume 100 \
-		--output artifacts/day06/events-seed-42.jsonl
-	python -m producer.event_producer \
-		--dry-run \
-		--seed 43 \
-		--data-volume 100 \
-		--output artifacts/day06/events-seed-43.jsonl
-	sha256sum \
-		artifacts/day06/events-seed-42.jsonl \
-		artifacts/day06/events-seed-43.jsonl
-	@if cmp -s \
-		artifacts/day06/events-seed-42.jsonl \
-		artifacts/day06/events-seed-43.jsonl; then \
-		echo "FAIL: different seeds generated identical files"; \
-		exit 1; \
-	else \
-		echo "PASS: different seeds generated different files"; \
-	fi
+	python -c "from pathlib import Path; Path('artifacts/day06').mkdir(parents=True, exist_ok=True)"
+	python -m producer.event_producer --dry-run --seed 42 --data-volume 100 --output artifacts/day06/events-seed-42.jsonl
+	python -m producer.event_producer --dry-run --seed 43 --data-volume 100 --output artifacts/day06/events-seed-43.jsonl
+	python -c "from pathlib import Path; import hashlib; paths=['artifacts/day06/events-seed-42.jsonl','artifacts/day06/events-seed-43.jsonl']; [print(hashlib.sha256(Path(path).read_bytes()).hexdigest() + '  ' + path) for path in paths]"
+	python -c "from pathlib import Path; import sys; different=Path('artifacts/day06/events-seed-42.jsonl').read_bytes() != Path('artifacts/day06/events-seed-43.jsonl').read_bytes(); print('PASS: different seeds generated different files' if different else 'FAIL: different seeds generated identical files'); sys.exit(0 if different else 1)"
 
 producer-run: create-topics
-	python -m producer.event_producer \
-		--seed 42 \
-		--data-volume 100 \
-		--bootstrap-servers localhost:9092 \
-		--topic retail-payment-events
+	python -m producer.event_producer --seed 42 --data-volume 100 --bootstrap-servers localhost:9092 --topic retail-payment-events
 
 producer-consume:
 	MSYS_NO_PATHCONV=1 docker compose exec -T kafka \

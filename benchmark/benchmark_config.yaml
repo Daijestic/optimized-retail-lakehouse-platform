@@ -40,7 +40,7 @@ metadata:
     - created_at
 
 paths:
-  bronze_path: s3a://lakehouse/bronze/retail_events/
+  bronze_path: s3a://lakehouse/bronze/retail-payment-events/
   silver_path: s3a://lakehouse/silver/
   gold_path: s3a://lakehouse/gold/
   benchmark_results_path: benchmark/results/
@@ -60,7 +60,7 @@ storage:
 
 kafka:
   bootstrap_servers: localhost:9092
-  topic: retail_events
+  topic: retail-payment-events
   consumer_group: lakehouse_benchmark_consumer
   source_metadata_fields:
     - source_topic
@@ -78,13 +78,15 @@ producer:
   unsupported_schema_version_rate: 0.005
   skew_mode: none
   supported_schema_versions:
-    - v1
+    - "1.0"
   event_types:
     - order_created
     - payment_authorized
     - payment_failed
     - refund_requested
-    - order_cancelled
+    - order_confirmed
+    - order_shipped
+    - order_delivered
   currencies:
     - VND
     - USD

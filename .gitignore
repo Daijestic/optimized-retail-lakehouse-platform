@@ -58,3 +58,8 @@ derby.log
 *.tmp
 *.temp
 *.swp
+
+# Day 6 generated producer datasets
+artifacts/day06/*.jsonl
+!artifacts/day06/.gitkeep
+artifacts/day06/pytest-result.txt
