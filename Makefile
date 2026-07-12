@@ -134,3 +134,37 @@ producer-consume:
 		--formatter-property "print.timestamp=true" \
 		--formatter-property "print.partition=true" \
 		--formatter-property "print.offset=true"
+
+.PHONY: \
+	consumer-run \
+	consumer-run-continuous \
+	consumer-group-describe \
+	test-kafka-consumer
+
+consumer-run:
+	python -m ingestion.kafka_consumer \
+		--bootstrap-servers localhost:9092 \
+		--topic retail-payment-events \
+		--group-id bronze-ingestion-v1 \
+		--client-id bronze-consumer-local \
+		--max-messages 20 \
+		--idle-timeout-seconds 10
+
+consumer-run-continuous:
+	python -m ingestion.kafka_consumer \
+		--bootstrap-servers localhost:9092 \
+		--topic retail-payment-events \
+		--group-id bronze-ingestion-v1 \
+		--client-id bronze-consumer-local \
+		--max-messages 0 \
+		--idle-timeout-seconds 0
+
+consumer-group-describe:
+	MSYS_NO_PATHCONV=1 docker compose exec -T kafka \
+		/opt/kafka/bin/kafka-consumer-groups.sh \
+		--bootstrap-server localhost:19092 \
+		--describe \
+		--group bronze-ingestion-v1
+
+test-kafka-consumer:
+	python -m pytest -q tests/test_kafka_consumer.py
