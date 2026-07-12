@@ -97,7 +97,7 @@ Benchmark được chạy trong môi trường local bằng Docker Compose.
 
 Các thành phần chính:
 
-- Kafka hoặc Redpanda: mô phỏng event streaming.
+- Apache Kafka KRaft: mô phỏng event streaming.
 - MinIO: mô phỏng object storage kiểu S3.
 - Spark/PySpark: xử lý Bronze, Silver, Gold và benchmark.
 - Delta Lake: table format chính cho Silver/Gold.

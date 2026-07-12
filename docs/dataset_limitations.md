@@ -65,7 +65,7 @@ Mỗi event mô phỏng một sự kiện nghiệp vụ, ví dụ:
 }
 ```
 
-Các event này được gửi vào Kafka/Redpanda, ghi xuống Bronze, xử lý ở Silver, tổng hợp ở Gold và dùng cho benchmark.
+Các event này được gửi vào Kafka, ghi xuống Bronze, xử lý ở Silver, tổng hợp ở Gold và dùng cho benchmark.
 
 ---
 

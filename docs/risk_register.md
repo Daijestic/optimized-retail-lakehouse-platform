@@ -90,7 +90,7 @@ Project có nhiều công nghệ hấp dẫn: Kafka, Spark, Delta Lake, Iceberg,
 
 Chia project thành 2 phần:
 
-- **MVP bắt buộc**: Producer, Kafka/Redpanda, Bronze, Silver, Gold, Delta Lake, benchmark full refresh vs incremental, benchmark small files vs compaction, Airflow, monitoring.
+- **MVP bắt buộc**: Producer, Apache Kafka KRaft, Bronze, Silver, Gold, Delta Lake, benchmark full refresh vs incremental, benchmark small files vs compaction, Airflow, monitoring.
 - **Stretch goals**: Iceberg/Trino, partition benchmark nâng cao, Spark AQE benchmark, CI/CD nâng cao, cloud deployment.
 
 ### Bằng chứng
@@ -721,7 +721,7 @@ Bằng chứng cần có:
 
 - Docker Compose chạy được;
 - MinIO có bucket;
-- Kafka/Redpanda nhận message test;
+- Apache Kafka KRaft nhận message test;
 - PostgreSQL có metadata tables;
 - Bronze có source_topic/source_partition/source_offset.
 
@@ -811,7 +811,7 @@ Nếu được hỏi:
 
 Có thể trả lời:
 
-> Em chia project thành MVP và stretch goals để tránh scope creep. MVP tập trung vào pipeline Kafka/Redpanda → Bronze → Silver → Gold → Delta Lake, benchmark full refresh vs incremental, benchmark small files vs compaction, Airflow retry/idempotency và monitoring. Em tạo risk register từ tuần 1 để theo dõi các rủi ro chính như benchmark không tái lập, synthetic data không đại diện production, nhầm lẫn micro-batch với hard real-time, duplicate events làm sai revenue và Airflow rerun tạo duplicate. Với mỗi rủi ro, em định nghĩa cách kiểm soát và bằng chứng cần tạo ra, ví dụ fixed seed, benchmark config, correctness tests, idempotency tests, dataset limitation và dashboard operational metrics.
+> Em chia project thành MVP và stretch goals để tránh scope creep. MVP tập trung vào pipeline Kafka → Bronze → Silver → Gold → Delta Lake, benchmark full refresh vs incremental, benchmark small files vs compaction, Airflow retry/idempotency và monitoring. Em tạo risk register từ tuần 1 để theo dõi các rủi ro chính như benchmark không tái lập, synthetic data không đại diện production, nhầm lẫn micro-batch với hard real-time, duplicate events làm sai revenue và Airflow rerun tạo duplicate. Với mỗi rủi ro, em định nghĩa cách kiểm soát và bằng chứng cần tạo ra, ví dụ fixed seed, benchmark config, correctness tests, idempotency tests, dataset limitation và dashboard operational metrics.
 
 ---
 

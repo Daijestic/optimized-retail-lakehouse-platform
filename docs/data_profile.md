@@ -51,7 +51,7 @@ Mục tiêu của data profile là ghi rõ dữ liệu được sinh như thế 
 Tên dataset:
 
 ```text
-synthetic_retail_payment_events
+synthetic-retail-payment-dataset
 ```
 
 Mục tiêu mô phỏng:
@@ -69,7 +69,7 @@ producer/event_producer.py
 Đích đến ban đầu:
 
 ```text
-Kafka/Redpanda topic: retail_events
+Kafka topic: retail-payment-events
 ```
 
 Các tầng sử dụng dataset:
@@ -112,7 +112,7 @@ Cấu hình đề xuất cho MVP:
 
 ```yaml
 dataset:
-  name: synthetic_retail_payment_events
+  name: synthetic-retail-payment-dataset
   random_seed: 42
   data_volume: 100000
   start_time: "2026-07-01T00:00:00Z"

@@ -119,7 +119,7 @@ Lakehouse phù hợp với project này vì kết hợp được:
 | Local environment | Docker Compose | Chạy nhiều service local |
 | Event streaming | Apache Kafka KRaft | Mô phỏng event stream |
 | Producer | Python | Sinh synthetic events |
-| Object storage | MinIO | Mô phỏng S3-compatible storage |
+| Object storage | MinIO Community source build | Mô phỏng S3-compatible storage local |
 | Processing | Spark/PySpark | Xử lý Bronze → Silver → Gold |
 | Table format | Delta Lake | Transaction log, schema, compaction |
 | Metadata database | PostgreSQL | Lưu pipeline runs, benchmark results, quality results |
@@ -741,18 +741,75 @@ docker compose down -v
 
 > Cảnh báo: `docker compose down -v` xóa dữ liệu Kafka, PostgreSQL và MinIO đang lưu trong named volumes.
 
-### 20.9. Các command sẽ được bổ sung ở các tuần sau
+### 20.9. Chạy deterministic event producer
+
+Cài Python dependencies:
 
 ```bash
-make generate-events
+python -m pip install -r requirements-dev.txt
+```
+
+Chạy unit tests:
+
+```bash
+make test-bad-events
+```
+
+Tạo dataset local mà không kết nối Kafka:
+
+```bash
+make producer-dry-run
+```
+
+Kiểm tra cùng seed tạo cùng dataset:
+
+```bash
+make producer-fixed-seed
+```
+
+Kiểm tra seed khác tạo dataset khác:
+
+```bash
+make producer-seed-difference
+```
+
+Gửi 100 controlled events vào Kafka:
+
+```bash
+make producer-run
+```
+
+Đọc event cùng key, timestamp, partition và offset:
+
+```bash
+make producer-consume
+```
+
+Các scenario mặc định:
+
+```text
+valid                        65
+duplicate                    10
+late                         10
+malformed                     5
+negative_amount               5
+unsupported_schema_version    5
+```
+
+Tài liệu liên quan:
+
+- [Day 6 Producer Design](docs/day06_producer.md)
+- [Week 1 Closure Notes](docs/week01_notes.md)
+
+### 20.10. Commands thuộc các tuần tiếp theo
+
+```bash
 make ingest-bronze
 make process-silver
 make build-gold
 make run-benchmarks
 make dashboard
 ```
-
-Các command này thuộc các giai đoạn producer hoàn chỉnh, Bronze, Silver, Gold, benchmark và monitoring; chúng chưa phải Definition of Done của Ngày 4.
 
 ## 21. Definition of Done cho MVP
 

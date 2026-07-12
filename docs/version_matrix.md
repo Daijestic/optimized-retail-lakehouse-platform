@@ -13,7 +13,8 @@ Decision date: 2026-07-06
 | Delta Lake | 3.3.1 | Delta 3.3.x is compatible with Spark 3.5.x |
 | Scala binary | 2.12 | Selected for Spark/Delta package compatibility |
 | Apache Airflow | 3.2.2 | Supports Python 3.11 and PostgreSQL 17 |
-| PostgreSQL | 17 | Supported by Airflow 3.2.2 |
+| PostgreSQL | 17.10 | Pinned local metadata database image |
+| MinIO Community | RELEASE.2025-10-15T17-29-55Z | S3-compatible object storage for local educational/development use |
 
 ## Docker images
 
@@ -21,10 +22,10 @@ Decision date: 2026-07-06
 |---|---|---|
 | Python | python:3.11.15-slim-bookworm | Fill after pull |
 | Kafka | apache/kafka:4.3.1 | Fill after pull |
-| PostgreSQL | To be finalized on Day 2 | |
-| MinIO | To be finalized on Day 2 | |
-| Spark | To be finalized on Day 3 | |
-| Airflow | To be finalized on Day 3 | |
+| PostgreSQL | postgres:17.10 | Fill after pull |
+| MinIO | lakehouse-minio:RELEASE.2025-10-15T17-29-55Z | Local source-build image |
+| Spark | apache/spark:3.5.8 | Fill after pull |
+| Airflow | apache/airflow:3.2.2-python3.11 | Fill after pull |
 
 ## Compatibility decisions
 

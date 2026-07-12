@@ -12,7 +12,7 @@ Tài liệu tập trung trả lời các câu hỏi:
 2. Dữ liệu đi qua pipeline như thế nào?
 3. Vì sao chọn kiến trúc Lakehouse thay vì Data Lake, Data Warehouse hoặc PostgreSQL đơn thuần?
 4. Vì sao project được định nghĩa là **micro-batch near real-time**, không phải hard real-time?
-5. Vai trò của Kafka/Redpanda, Bronze, Silver, Gold, Delta Lake, Airflow và Monitoring là gì?
+5. Vai trò của Apache Kafka KRaft, Bronze, Silver, Gold, Delta Lake, Airflow và Monitoring là gì?
 6. MVP cần làm đến đâu để có thể bảo vệ được?
 7. Những phần nào là stretch goal, chỉ làm sau khi MVP đã ổn?
 
@@ -35,7 +35,7 @@ Em dùng Streamlit.
 Mà phải hiểu theo hướng:
 
 ```text
-Kafka/Redpanda mô phỏng event stream và các lỗi thực tế như duplicate, late, malformed events.
+Apache Kafka KRaft mô phỏng event stream và các lỗi thực tế như duplicate, late, malformed events.
 Bronze giữ raw immutable data để audit và replay.
 Silver xử lý validation, deduplication, late-event flag và DLQ.
 Delta Lake bổ sung transaction log, schema enforcement, time travel và compaction.
@@ -62,7 +62,7 @@ Synthetic Retail / Payment Events
 Producer
 valid + duplicate + late + malformed events
         ↓
-Kafka / Redpanda
+Apache Kafka KRaft
 Event streaming layer
         ↓
 Bronze Layer
@@ -115,7 +115,7 @@ Millisecond-level streaming
 Sub-second fraud detection system
 ```
 
-Trong project này, dữ liệu được sinh liên tục từ producer và đi qua Kafka/Redpanda. Tuy nhiên, Spark Structured Streaming sẽ xử lý dữ liệu theo các batch nhỏ.
+Trong project này, dữ liệu được sinh liên tục từ producer và đi qua Apache Kafka KRaft. Tuy nhiên, Spark Structured Streaming sẽ xử lý dữ liệu theo các batch nhỏ.
 
 Latency mục tiêu:
 
@@ -148,7 +148,7 @@ Project không xử lý từng event ở mức millisecond.
 
 ### 5.2. Câu trả lời phỏng vấn
 
-> Project của em dùng Spark Structured Streaming theo micro-batch. Dữ liệu được đọc liên tục từ Kafka/Redpanda nhưng được xử lý theo các batch nhỏ. Em gọi đây là near real-time vì latency mục tiêu khoảng 1–5 phút, phù hợp dashboard retail/payment. Em không gọi là hard real-time vì project không xử lý từng event ở mức millisecond và không có ràng buộc thời gian cứng.
+> Project của em dùng Spark Structured Streaming theo micro-batch. Dữ liệu được đọc liên tục từ Kafka nhưng được xử lý theo các batch nhỏ. Em gọi đây là near real-time vì latency mục tiêu khoảng 1–5 phút, phù hợp dashboard retail/payment. Em không gọi là hard real-time vì project không xử lý từng event ở mức millisecond và không có ràng buộc thời gian cứng.
 
 ---
 
@@ -222,15 +222,13 @@ Full refresh và incremental phải chạy trên cùng data volume, cùng seed, 
 
 ---
 
-## 7. Thành phần 2: Kafka / Redpanda
+## 7. Thành phần 2: Apache Kafka KRaft
 
 ### 7.1. Vai trò
 
-Kafka/Redpanda được dùng làm event streaming layer.
+Apache Kafka KRaft được dùng làm Kafka event-streaming layer.
 
-Trong project local, Redpanda có thể được dùng để giảm độ nặng khi chạy trên máy cá nhân, nhưng về mặt kiến trúc, nó đóng vai trò tương tự Kafka-compatible event streaming platform.
-
-Kafka/Redpanda giúp project mô phỏng các vấn đề thực tế:
+Kafka giúp project mô phỏng các vấn đề thực tế:
 
 - event được publish liên tục;
 - consumer đọc theo offset;
@@ -239,33 +237,37 @@ Kafka/Redpanda giúp project mô phỏng các vấn đề thực tế:
 - consumer có thể replay lại từ offset;
 - pipeline có thể trace event từ Bronze về source topic/partition/offset.
 
-### 7.2. Topic đề xuất
+### 7.2. Topic design
 
-MVP nên bắt đầu với một topic duy nhất:
+Tuần 1 dùng một topic duy nhất:
 
 ```text
-retail_events
+retail-payment-events
 ```
 
 Topic này chứa nhiều loại event:
 
 ```text
 order_created
-order_cancelled
+order_confirmed
 payment_authorized
 payment_failed
+order_shipped
+order_delivered
 refund_requested
 ```
 
-Sau MVP có thể tách thành nhiều topic:
+Thiết kế topic local:
 
 ```text
-order_events
-payment_events
-refund_events
+partitions: 3
+replication factor: 1
+retention.ms: 604800000
+cleanup.policy: delete
+Kafka key: order_id
 ```
 
-Nhưng không nên tách quá sớm vì sẽ làm scope phình to.
+`order_id` là Kafka record key để các event cùng đơn hàng thường đi vào cùng partition. Kafka chỉ đảm bảo ordering trong cùng một partition, không đảm bảo ordering trên toàn topic. `event_id` vẫn là khóa deduplication nghiệp vụ ở Silver trong tương lai.
 
 ---
 
@@ -321,8 +323,8 @@ processing_date
 Ví dụ:
 
 ```text
-s3://lakehouse/bronze/retail_events/processing_date=2026-07-01/part-001.json
-s3://lakehouse/bronze/retail_events/processing_date=2026-07-01/part-002.json
+s3://lakehouse/bronze/retail-payment-events/processing_date=2026-07-01/part-001.json
+s3://lakehouse/bronze/retail-payment-events/processing_date=2026-07-01/part-002.json
 ```
 
 Lý do:
@@ -333,7 +335,7 @@ Lý do:
 
 ### 8.4. Câu trả lời phỏng vấn
 
-> Bronze của em giữ raw immutable events để audit và replay. Em không sửa dữ liệu ở Bronze vì nếu logic Silver bị sai, em cần dữ liệu gốc để chạy lại. Bronze cũng lưu source topic, partition và offset để trace event từ Lakehouse ngược về Kafka/Redpanda.
+> Bronze của em giữ raw immutable events để audit và replay. Em không sửa dữ liệu ở Bronze vì nếu logic Silver bị sai, em cần dữ liệu gốc để chạy lại. Bronze cũng lưu source topic, partition và offset để trace event từ Lakehouse ngược về Kafka.
 
 ---
 
@@ -788,7 +790,7 @@ compaction_runtime_seconds
 ```text
 Producer sinh event
         ↓
-Gửi vào Kafka/Redpanda topic retail_events
+Gửi vào Kafka topic retail-payment-events
         ↓
 Consumer đọc topic theo offset
         ↓
@@ -858,7 +860,7 @@ Project local nên dùng Docker Compose.
 Các service tối thiểu:
 
 ```text
-Redpanda hoặc Kafka
+Apache Kafka KRaft
 MinIO
 PostgreSQL metadata
 Spark local
@@ -870,7 +872,7 @@ Vai trò:
 
 | Service | Vai trò |
 |---|---|
-| Redpanda/Kafka | Event streaming layer |
+| Apache Kafka KRaft | Event streaming layer |
 | MinIO | Object storage mô phỏng S3 |
 | PostgreSQL | Metadata database |
 | Spark | Processing engine |
@@ -975,7 +977,7 @@ MVP bắt buộc gồm:
 
 ```text
 [ ] Producer sinh valid, duplicate, late, malformed events
-[ ] Kafka/Redpanda nhận events
+[ ] Apache Kafka KRaft nhận events
 [ ] Bronze raw immutable + source offset + ingestion metadata
 [ ] Replay guide
 [ ] Silver validation + dedup + late-event flag + DLQ
@@ -1031,7 +1033,7 @@ Nếu correctness tests chưa pass, không tối ưu performance.
 
 ## 22. Cách kể kiến trúc trong phỏng vấn
 
-> Em thiết kế project theo hướng Lakehouse cho bài toán retail/payment near real-time analytics. Dữ liệu được sinh từ producer và gửi vào Kafka/Redpanda để mô phỏng event stream. Bronze giữ raw immutable events kèm source offset và ingestion metadata để audit và replay. Silver xử lý validation, deduplication theo event_id, late-event flag và DLQ. Gold tạo business metrics như revenue, orders, payment failure rate và pipeline health metrics như freshness, duplicate count, DLQ count.
+> Em thiết kế project theo hướng Lakehouse cho bài toán retail/payment near real-time analytics. Dữ liệu được sinh từ producer và gửi vào Apache Kafka KRaft để mô phỏng event stream. Bronze giữ raw immutable events kèm source offset và ingestion metadata để audit và replay. Silver xử lý validation, deduplication theo event_id, late-event flag và DLQ. Gold tạo business metrics như revenue, orders, payment failure rate và pipeline health metrics như freshness, duplicate count, DLQ count.
 >
 > Em dùng Delta Lake cho Silver và Gold để có transaction log, schema enforcement, time travel và compaction. Sau đó em benchmark full refresh vs incremental và small files vs compaction theo methodology có fixed seed, data volume, Spark config, query hash và nhiều lần chạy. Airflow dùng để orchestrate pipeline, kiểm soát retry/rerun/backfill và đảm bảo idempotency. Dashboard không chỉ hiển thị business metrics mà còn theo dõi operational metrics như freshness, query time và file count.
 >
