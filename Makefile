@@ -206,3 +206,21 @@ consumer-group-bronze:
 		--bootstrap-server localhost:19092 \
 		--describe \
 		--group bronze-ingestion-v1
+
+.PHONY: \
+	replay-bronze-dry-run \
+	replay-bronze \
+	test-replay-bronze
+
+replay-bronze-dry-run:
+	python -m scripts.replay_bronze \
+		--processing-date "$(PROCESSING_DATE)" \
+		--dry-run
+
+replay-bronze:
+	python -m scripts.replay_bronze \
+		--processing-date "$(PROCESSING_DATE)"
+
+test-replay-bronze:
+	python -m pytest -q \
+		tests/test_replay_bronze.py

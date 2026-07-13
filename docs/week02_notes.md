@@ -1,48 +1,55 @@
-# Week 2 Notes — Kafka to Immutable Bronze
+# Ghi chú Tuần 2 — Kafka đến Bronze bất biến
 
-## Week objective
+## 1. Mục tiêu của tuần
 
-Build the ingestion path:
+Xây dựng luồng ingestion:
 
 ```text
 Synthetic producer
 → Apache Kafka
 → Python consumer group
-→ immutable Bronze JSONL objects in MinIO
+→ immutable Bronze JSONL objects trong MinIO
 ```
 
-Bronze preserves raw Kafka records and technical source metadata for audit, replay, debugging, and later Silver processing. It does not validate business rules or remove duplicate and malformed records.
+Bronze giữ raw Kafka records và technical source metadata để phục vụ audit, reconciliation, replay, debugging và xử lý Silver sau này.
+
+Bronze không:
+
+- validate business rule;
+- loại duplicate;
+- loại malformed record;
+- sửa raw payload.
 
 ---
 
-## Day 1 — Kafka Consumer Groups and Offsets
+## 2. Ngày 1 — Kafka consumer group và offset
 
-### Topic configuration
+### 2.1. Cấu hình topic
 
-| Setting | Value |
+| Cấu hình | Giá trị |
 |---|---|
 | Topic | `retail-payment-events` |
-| Partitions | `3` |
+| Số partition | `3` |
 | Replication factor | `1` |
-| Local broker mode | Single-broker Kafka KRaft |
+| Broker local | Kafka KRaft một broker |
 
-### Concepts verified
+### 2.2. Các khái niệm đã kiểm chứng
 
-- An offset is scoped to one Kafka partition.
-- Consumers in the same group share partitions.
-- Different groups maintain independent committed offsets.
-- A committed offset is the position of the next record to read.
-- Consumer lag is calculated from the log-end offset and committed offset.
-- `auto.offset.reset=earliest` applies only when a valid committed offset does not exist.
+- Offset chỉ có ý nghĩa trong phạm vi một Kafka partition.
+- Các consumer cùng group chia nhau partition.
+- Các group khác nhau có committed offsets độc lập.
+- Committed offset là vị trí của record tiếp theo cần đọc.
+- Consumer lag được tính từ log-end offset và committed offset.
+- `auto.offset.reset=earliest` chỉ có tác dụng khi không tồn tại committed offset hợp lệ.
 
-### Consumer-group experiment
+### 2.3. Thí nghiệm consumer group
 
-- Learning group: `bronze-learning-v1`
-- The group was stopped and restarted to verify resume behavior.
-- A second group was used to verify that retained Kafka history could be read independently.
-- Multiple consumers in one group were used to observe partition assignment and rebalance behavior.
+- Group học tập: `bronze-learning-v1`.
+- Dừng và khởi động lại cùng group để kiểm tra resume behavior.
+- Dùng group thứ hai để đọc Kafka history độc lập.
+- Chạy nhiều consumer trong cùng group để quan sát partition assignment và rebalance.
 
-### Final observed state
+### 2.4. Trạng thái đã quan sát
 
 | Partition | Committed offset | Log-end offset | Lag |
 |---:|---:|---:|---:|
@@ -50,75 +57,75 @@ Bronze preserves raw Kafka records and technical source metadata for audit, repl
 | 1 | 150 | 150 | 0 |
 | 2 | 160 | 160 | 0 |
 
-### Decisions for Bronze
+### 2.5. Quyết định cho Bronze
 
-| Decision | Value |
+| Quyết định | Giá trị |
 |---|---|
-| Consumer group | Stable group ID |
+| Consumer group | Group ID ổn định |
 | `enable.auto.commit` | `false` |
 | `enable.auto.offset.store` | `false` |
 | `auto.offset.reset` | `earliest` |
 | Delivery semantics | At-least-once |
-| Commit point | Only after a successful durable Bronze write |
+| Điểm commit | Chỉ sau khi Bronze write bền vững thành công |
 
 ---
 
-## Day 2 — Python Raw Kafka Consumer
+## 3. Ngày 2 — Python raw Kafka consumer
 
-### Implementation
+### 3.1. Cấu hình
 
-| Setting | Value |
+| Cấu hình | Giá trị |
 |---|---|
 | Client | `confluent-kafka==2.15.0` |
 | Topic | `retail-payment-events` |
-| Bootstrap server from Windows host | `localhost:9092` |
+| Bootstrap server từ Windows host | `localhost:9092` |
 | Main Bronze group | `bronze-ingestion-day03-v1` |
 | `auto.offset.reset` | `earliest` |
 | `enable.auto.commit` | `false` |
 | `enable.auto.offset.store` | `false` |
 
-### Raw Kafka fields captured
+### 3.2. Các raw field được lấy từ Kafka
 
-- `key`
-- `value`
-- `topic`
-- `partition`
-- `offset`
-- Kafka timestamp type and timestamp
-- headers
+- `key`;
+- `value`;
+- `topic`;
+- `partition`;
+- `offset`;
+- Kafka timestamp type và timestamp;
+- headers.
 
-### Consumer behavior
+### 3.3. Hành vi consumer
 
-- Kafka key and value remain `bytes | None`.
-- The raw consumer does not call `json.loads()` on the message value.
-- Malformed JSON therefore does not crash or disappear from ingestion.
-- Partition assignment, revocation, and loss callbacks are logged.
-- `consumer.close()` is called during shutdown.
-- No offset is committed until the Bronze writer confirms durable storage.
+- Kafka key và value được giữ ở kiểu `bytes | None`.
+- Raw consumer không gọi `json.loads()` trên message value.
+- Malformed JSON không làm consumer crash và không bị mất khỏi ingestion.
+- Callback assign, revoke và lost được log.
+- `consumer.close()` được gọi khi shutdown.
+- Không commit offset trước khi Bronze writer xác nhận object đã được ghi bền vững.
 
-### Verification
+### 3.4. Kết quả kiểm tra
 
-- The consumer connected to `localhost:9092`.
-- It subscribed to all three topic partitions.
-- It read valid, duplicate, late, malformed, negative-amount, and unsupported-schema-version records without applying business validation.
-- Restarting a no-commit test group caused uncommitted records to be read again, as expected.
+- Consumer kết nối thành công tới `localhost:9092`.
+- Consumer subscribe đủ ba partition.
+- Consumer đọc được valid, duplicate, late, malformed, negative amount và unsupported schema version.
+- No-commit test chứng minh record chưa commit được đọc lại sau restart.
 
 ---
 
-## Day 3 — Kafka to MinIO Bronze Raw
+## 4. Ngày 3 — Kafka đến MinIO Bronze raw
 
-### Storage configuration
+### 4.1. Cấu hình lưu trữ
 
-| Setting | Value |
+| Cấu hình | Giá trị |
 |---|---|
 | Endpoint | `http://localhost:9000` |
 | Bucket | `lakehouse` |
-| Development prefix | `bronze/events/_unpartitioned` |
+| Prefix development | `bronze/events/_unpartitioned` |
 | Object format | JSON Lines |
 | Content type | `application/x-ndjson` |
-| Raw byte encoding | Base64 |
+| Mã hóa raw bytes | Base64 |
 
-### Object-key policy
+### 4.2. Object key development
 
 ```text
 bronze/events/_unpartitioned/
@@ -127,150 +134,158 @@ partition=<partition>/
 offsets=<start-offset>-<end-offset>.jsonl
 ```
 
-One object contains records from only one Kafka partition. Within a processing date and a source range, the key is deterministic from:
+Một object chỉ chứa record của một Kafka partition.
+
+Object key có tính deterministic theo:
 
 ```text
-topic + partition + start_offset + end_offset
+topic
++ partition
++ start_offset
++ end_offset
 ```
 
-### Durability and commit sequence
+### 4.3. Trình tự ghi và commit
 
 1. Poll Kafka records.
-2. Group the batch by Kafka partition.
-3. Serialize raw key/value bytes as Base64 inside JSONL envelopes.
-4. Upload one object for each represented Kafka partition.
-5. Verify object `ContentLength` and the stored checksum metadata.
-6. Commit `max_source_offset + 1` for each successfully persisted partition batch.
+2. Group batch theo Kafka partition.
+3. Mã hóa raw key/value thành Base64 trong JSONL envelope.
+4. Upload một object cho mỗi partition xuất hiện trong batch.
+5. Kiểm tra `ContentLength` và checksum metadata.
+6. Commit `max_source_offset + 1` cho từng partition đã ghi thành công.
 
-The custom SHA-256 value stored in object metadata verifies that the expected checksum metadata was persisted. A full stored-body checksum verification requires downloading the object body or using a supported S3 checksum response.
+Custom SHA-256 metadata cho biết checksum mong đợi đã được lưu. Muốn kiểm tra độc lập checksum của body đang lưu, cần tải body hoặc dùng checksum response được object store hỗ trợ.
 
-### Reconciliation evidence
+### 4.4. Bằng chứng reconciliation
 
 | Partition | Bronze offset coverage | Records | Objects | Kafka current offset | Kafka log-end offset | Lag |
 |---:|---|---:|---:|---:|---:|---:|
 | 0 | `0–383` | 384 | 5 | 384 | 384 | 0 |
 | 1 | `0–299` | 300 | 4 | 300 | 300 | 0 |
 | 2 | `0–319` | 320 | 4 | 320 | 320 | 0 |
-| **Total** | — | **1004** | **13** | — | — | **0** |
+| **Tổng** | — | **1004** | **13** | — | — | **0** |
 
-### Assertions
+### 4.5. Assertions
 
-- Kafka source records: `1004`
-- Bronze JSONL rows: `1004`
-- Missing source offsets: `0`
-- Overlapping source ranges: `0`
-- Consumer lag after ingestion: `0`
-- Result: **PASS**
+- Kafka source records: `1004`.
+- Bronze JSONL rows: `1004`.
+- Missing source offsets: `0`.
+- Overlapping source ranges: `0`.
+- Consumer lag sau ingestion: `0`.
+- Kết quả: **PASS**.
 
-### Failure test
-
-The intended invariant is:
+### 4.6. Failure invariant
 
 ```text
-Bronze write or verification failure
-→ Kafka offsets are not committed
-→ the same source records remain available after restart
+Bronze write hoặc verification thất bại
+→ không commit Kafka offset
+→ source records vẫn được đọc lại sau restart
 ```
 
-Live evidence for a failure injected after polling but before object persistence should be recorded separately. Stopping MinIO before the writer starts only verifies startup failure, not the complete post-poll failure path.
+Dừng MinIO trước khi writer khởi động chỉ kiểm tra startup failure. Muốn kiểm chứng đầy đủ, cần inject failure sau khi đã poll record nhưng trước khi object được persist.
 
-### Limitations at the end of Day 3
+### 4.7. Giới hạn cuối Ngày 3
 
-- No ingestion-run metadata in historical Day 3 rows.
-- No processing-date storage partition.
-- No replay command.
-- No Silver validation or deduplication.
-- Full rebalance-aware batch flushing is deferred to hardening.
+- Historical Day 3 rows chưa có ingestion metadata mới.
+- Chưa partition theo `processing_date`.
+- Chưa có replay command.
+- Chưa có Silver validation hoặc deduplication.
+- Rebalance-aware batch flushing được hoãn đến hardening.
 
 ---
 
-## Day 4 — Bronze Metadata and Audit Context
+## 5. Ngày 4 — Bronze metadata và audit context
 
-### Metadata categories
+### 5.1. Source metadata
 
-#### Source metadata
+- `source_record_id`;
+- `source_topic`;
+- `source_partition`;
+- `source_offset`;
+- `kafka_timestamp_type`;
+- `kafka_timestamp_ms`;
+- headers.
 
-- `source_record_id`
-- `source_topic`
-- `source_partition`
-- `source_offset`
-- `kafka_timestamp_type`
-- `kafka_timestamp_ms`
-- headers
+### 5.2. Ingestion metadata
 
-#### Ingestion metadata
+- `ingestion_run_id`;
+- `ingestion_batch_number`;
+- `ingestion_batch_id`;
+- `ingestion_time`.
 
-- `ingestion_run_id`
-- `ingestion_batch_number`
-- `ingestion_batch_id`
-- `ingestion_time`
+### 5.3. Best-effort event metadata
 
-#### Best-effort event metadata
+- `payload_parse_status`;
+- `event_id`;
+- `event_type`;
+- `event_time`;
+- `producer_time`;
+- `schema_version`.
 
-- `payload_parse_status`
-- `event_id`
-- `event_type`
-- `event_time`
-- `producer_time`
-- `schema_version`
+### 5.4. Chính sách thời gian
 
-### Time policy
+- Ingestion timestamp là timezone-aware UTC.
+- Timestamp được serialize theo ISO 8601 và kết thúc bằng `Z`.
+- `ingestion_time` do Bronze pipeline tạo.
+- `event_time`, `producer_time` và Kafka timestamp là các khái niệm độc lập.
 
-- Ingestion timestamps are timezone-aware UTC values.
-- They are serialized as ISO 8601 strings ending in `Z`.
-- `ingestion_time` is created by the Bronze pipeline.
-- `event_time`, `producer_time`, and Kafka timestamp remain separate concepts.
+### 5.5. Chính sách parse
 
-### Parse policy
+Bronze parse theo best-effort:
 
-Bronze parsing is best effort only:
+- giữ malformed JSON;
+- giữ invalid UTF-8;
+- không reject negative amount;
+- không reject unsupported schema version;
+- raw Kafka key/value là dữ liệu có tính thẩm quyền;
+- business validation được để sang Silver.
 
-- malformed JSON is preserved;
-- invalid UTF-8 is preserved;
-- a negative amount is not rejected;
-- an unsupported schema version is not rejected;
-- raw Kafka key/value bytes remain authoritative;
-- business validation is deferred to Silver.
-
-### Identity policy
+### 5.6. Chính sách định danh
 
 ```text
 source_record_id = <topic>:<partition>:<offset>
 ```
 
-`source_record_id` identifies a Kafka record. It is intentionally different from `event_id`, because controlled duplicate events can share one `event_id` while occupying different Kafka offsets.
+`source_record_id` định danh Kafka record. Nó khác với `event_id` vì controlled duplicate có thể cùng `event_id` nhưng nằm ở các Kafka offset khác nhau.
 
-### Live evidence to record
+### 5.7. Bằng chứng cần điền
 
-| Metric | Result |
+| Metric | Kết quả |
 |---|---|
 | Ingestion run ID | |
 | Record count | |
 | Object count | |
 | `parsed_object` count | |
 | `invalid_json` count | |
-| Kafka lag after run | |
+| Kafka lag sau run | |
 
-### Compatibility note
+### 5.8. Ghi chú tương thích
 
-Objects written before Day 4 use the earlier additive Bronze envelope and do not contain all Day 4 ingestion metadata. A clean end-to-end rerun at the end of Week 2 should be used for final demonstration evidence.
+Object được tạo trước Ngày 4 dùng Bronze envelope đời trước và chưa có đủ ingestion metadata. Cuối Tuần 2 cần một clean end-to-end run để tạo evidence cuối cùng.
 
 ---
 
-## Day 5 — Processing-Date Partitioning
+## 6. Ngày 5 — Partition theo `processing_date`
 
-### Date policy
+### 6.1. Chính sách ngày xử lý
 
-| Rule | Value |
+| Quy tắc | Giá trị |
 |---|---|
 | Timezone | UTC |
-| Source field | `ingestion_time` |
-| Format | `YYYY-MM-DD` |
-| Business event time used for partitioning | No |
+| Field nguồn | `ingestion_time` |
+| Định dạng | `YYYY-MM-DD` |
+| Có dùng business event time không? | Không |
 
-`processing_date` represents when the Bronze pipeline ingested the data. It is not derived from `event_time`, `producer_time`, the Windows local date, or the Kafka record timestamp.
+`processing_date` thể hiện ngày Bronze pipeline ingest dữ liệu.
 
-### Object layout
+Không suy ra từ:
+
+- `event_time`;
+- `producer_time`;
+- ngày local của Windows;
+- Kafka record timestamp.
+
+### 6.2. Object layout
 
 ```text
 bronze/events/
@@ -280,61 +295,139 @@ partition=<kafka-partition>/
 offsets=<start-offset>-<end-offset>.jsonl
 ```
 
-The `key=value` segments are storage prefixes that support partition discovery by file-based processing engines. They are not physical filesystem directories.
+Các segment `key=value` là prefix phục vụ partition discovery. Chúng không phải thư mục vật lý theo nghĩa filesystem truyền thống.
 
-### Consistency invariant
+### 6.3. Bất biến nhất quán
 
-For every partitioned Bronze object:
+Với mỗi partitioned object:
 
 ```text
-processing_date in object key
+processing_date trong object key
 =
-processing-date in object metadata
+processing-date trong object metadata
 =
-processing_date in every JSONL row
+processing_date trong mọi JSONL row
 ```
 
-### Design decision
+### 6.4. Quyết định thiết kế
 
-`ingestion_run_id` remains in row-level metadata, object-level metadata, and structured logs. It is not used as a physical storage partition because it has high cardinality and would create many small run-specific prefixes.
+`ingestion_run_id` được giữ trong:
 
-### Historical objects
+- row-level metadata;
+- object-level metadata;
+- structured logs.
 
-Objects produced before Day 5 remain under:
+Không dùng `ingestion_run_id` làm physical storage partition vì cardinality cao và dễ tạo nhiều prefix nhỏ.
+
+### 6.5. Historical objects
+
+Các object trước Ngày 5 vẫn nằm tại:
 
 ```text
 bronze/events/_unpartitioned/
 ```
 
-They are development artifacts and should be excluded from processing-date replay. They can be removed only after the partitioned path has been verified and a clean final Week 2 run has been captured.
+Đây là development artifacts, bị loại khỏi replay theo `processing_date`.
 
-### Idempotency limitation
+Chỉ xóa khi:
 
-The object key is deterministic for the same:
+1. partitioned path đã được kiểm tra;
+2. có clean final Week 2 run;
+3. evidence cần thiết đã được giữ lại.
+
+### 6.6. Giới hạn idempotency
+
+Object key deterministic theo:
 
 ```text
-processing_date + topic + partition + offset range
+processing_date
++ topic
++ partition
++ offset range
 ```
 
-If the same uncommitted Kafka range is retried on a different UTC date, at-least-once delivery can create a second object under a different `processing_date`. Downstream processing must use source coordinates for reconciliation and deduplication.
+Nếu cùng uncommitted Kafka range bị retry vào ngày UTC khác, at-least-once có thể tạo object thứ hai dưới `processing_date` khác.
 
-### Live evidence to record
+Downstream phải dùng source coordinates để reconciliation và deduplication.
 
-| Metric | Result |
+### 6.7. Bằng chứng cần điền
+
+| Metric | Kết quả |
 |---|---|
 | Processing date | |
 | Ingestion run ID | |
 | Object count | |
 | Record count | |
 | Path/metadata/row consistency | |
-| Kafka lag after ingestion | |
+| Kafka lag sau ingestion | |
 
 ---
 
-## Remaining Week 2 work
+## 7. Ngày 6 — Replay theo `processing_date`
 
-- Implement replay by `processing_date`.
-- Verify replay does not mutate Bronze objects.
-- Document the replay strategy.
-- Run a clean end-to-end Week 2 verification.
-- Capture final commands, logs, object counts, source-offset reconciliation, and limitations.
+### 7.1. Phạm vi
+
+| Nội dung | Chính sách |
+|---|---|
+| Replay selector | Một `processing_date` UTC |
+| Nguồn | Partitioned MinIO Bronze objects |
+| Output | Local deterministic JSONL |
+| Reset Kafka offset | Không |
+| Publish lại Kafka | Không |
+| Thay đổi Bronze | Không |
+
+### 7.2. Các kiểm tra
+
+- object-key layout;
+- object metadata;
+- offset overlap;
+- offset gap;
+- row source coordinates;
+- Base64 fields;
+- output SHA-256;
+- tính deterministic của output.
+
+### 7.3. Bằng chứng cần điền
+
+| Metric | Kết quả |
+|---|---|
+| Processing date | |
+| Replay run ID | |
+| Source object count | |
+| Replayed record count | |
+| Output path | |
+| Output SHA-256 | |
+| Kafka offsets trước replay | |
+| Kafka offsets sau replay | |
+| Bronze object count trước replay | |
+| Bronze object count sau replay | |
+
+### 7.4. Determinism test
+
+| Kiểm tra | Kết quả |
+|---|---|
+| SHA-256 output lần 1 | |
+| SHA-256 output lần 2 | |
+| Hai hash giống nhau | |
+
+### 7.5. Giới hạn hiện tại
+
+- Một `processing_date` cho mỗi command.
+- Chưa replay theo `ingestion_run_id`.
+- Chưa replay theo arbitrary Kafka offset range.
+- Chưa date-range backfill.
+- Replay output là local JSONL, chưa phải Spark/Delta target.
+- Historical `_unpartitioned` objects bị loại khỏi replay.
+
+---
+
+## 8. Công việc còn lại của Tuần 2
+
+- Chạy live replay theo `processing_date`.
+- Chứng minh replay không thay đổi Kafka offsets.
+- Chứng minh replay không thay đổi Bronze object count.
+- Chạy determinism test.
+- Chạy clean end-to-end verification cho toàn bộ Tuần 2.
+- Điền các bảng evidence còn trống.
+- Cập nhật command, count, checksum và limitation cuối cùng.
+- Hoàn thiện tài liệu và đóng Tuần 2.

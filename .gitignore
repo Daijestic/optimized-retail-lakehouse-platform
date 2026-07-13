@@ -63,3 +63,6 @@ derby.log
 artifacts/day06/*.jsonl
 !artifacts/day06/.gitkeep
 artifacts/day06/pytest-result.txt
+
+# Local Bronze replay artifacts
+artifacts/replay/
