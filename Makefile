@@ -168,3 +168,41 @@ consumer-group-describe:
 
 test-kafka-consumer:
 	python -m pytest -q tests/test_kafka_consumer.py
+
+.PHONY: \
+	bronze-run \
+	bronze-run-continuous \
+	test-bronze-writer \
+	consumer-group-bronze
+
+bronze-run:
+	python -m ingestion.bronze_writer \
+		--bootstrap-servers localhost:9092 \
+		--topic retail-payment-events \
+		--group-id bronze-ingestion-v1 \
+		--client-id bronze-writer-local \
+		--batch-size 100 \
+		--batch-wait-seconds 5 \
+		--max-messages 100 \
+		--idle-timeout-seconds 15
+
+bronze-run-continuous:
+	python -m ingestion.bronze_writer \
+		--bootstrap-servers localhost:9092 \
+		--topic retail-payment-events \
+		--group-id bronze-ingestion-v1 \
+		--client-id bronze-writer-local \
+		--batch-size 100 \
+		--batch-wait-seconds 5 \
+		--max-messages 0 \
+		--idle-timeout-seconds 0
+
+test-bronze-writer:
+	python -m pytest -q tests/test_bronze_writer.py
+
+consumer-group-bronze:
+	MSYS_NO_PATHCONV=1 docker compose exec -T kafka \
+		/opt/kafka/bin/kafka-consumer-groups.sh \
+		--bootstrap-server localhost:19092 \
+		--describe \
+		--group bronze-ingestion-v1

@@ -350,6 +350,63 @@ class RawKafkaConsumer:
             run_id=self.run_id,
             group_id=self.config.group_id,
         )
+    
+    def commit_offsets(
+        self,
+        offsets: list[TopicPartition],
+    ) -> list[TopicPartition]:
+        """Synchronously commit offsets after durable Bronze writes."""
+
+        if not offsets:
+            raise ValueError("offsets must not be empty")
+
+        committed = self._consumer.commit(
+            offsets=offsets,
+            asynchronous=False,
+        )
+
+        if committed is None:
+            raise RuntimeError(
+                "Kafka synchronous commit returned no result"
+            )
+
+        failed = [
+            item
+            for item in committed
+            if item.error is not None
+        ]
+
+        if failed:
+            details = [
+                {
+                    "topic": item.topic,
+                    "partition": item.partition,
+                    "offset": item.offset,
+                    "error": str(item.error),
+                }
+                for item in failed
+            ]
+
+            raise RuntimeError(
+                f"Kafka offset commit failed: {details}"
+            )
+
+        log_event(
+            self.logger,
+            logging.INFO,
+            "kafka_offsets_committed",
+            run_id=self.run_id,
+            offsets=[
+                {
+                    "topic": item.topic,
+                    "partition": item.partition,
+                    "offset": item.offset,
+                }
+                for item in committed
+            ],
+        )
+
+        return committed
 
 
 def consume_to_console(
