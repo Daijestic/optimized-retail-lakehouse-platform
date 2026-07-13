@@ -110,7 +110,8 @@ def test_raw_record_keeps_malformed_payload_exactly() -> None:
 
 def test_object_key_is_deterministic() -> None:
     first = build_object_key(
-        prefix="bronze/events/_unpartitioned",
+        prefix="bronze/events",
+        processing_date="2026-07-13",
         topic="retail-payment-events",
         partition=1,
         start_offset=10,
@@ -118,7 +119,8 @@ def test_object_key_is_deterministic() -> None:
     )
 
     second = build_object_key(
-        prefix="bronze/events/_unpartitioned",
+        prefix="bronze/events",
+        processing_date="2026-07-13",
         topic="retail-payment-events",
         partition=1,
         start_offset=10,
@@ -216,6 +218,11 @@ def test_writer_creates_one_object_per_partition() -> None:
             )
         )
 
+        assert (
+            metadata["processing-date"]
+            == "2026-07-13"
+        )
+
     assert len(results) == 2
     assert len(fake_s3.objects) == 2
 
@@ -259,9 +266,25 @@ def test_rewriting_same_range_uses_same_object_key() -> None:
         context=context,
     )
 
+    stored_object = fake_s3.objects[
+        (
+            "lakehouse",
+            first[0].object_key,
+        )
+    ]
+
+    metadata = stored_object["Metadata"]
+
+    assert (
+        metadata["processing-date"]
+        == "2026-07-13"
+    )
+
     assert first[0].object_key == second[0].object_key
     assert len(fake_s3.objects) == 1
+    
 
+    
 def test_jsonl_contains_ingestion_metadata() -> None:
     body = serialize_jsonl(
         [make_record(offset=10)],

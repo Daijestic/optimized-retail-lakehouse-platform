@@ -83,8 +83,6 @@ class BronzeIngestionContext:
         ingestion_batch_number: int,
         now: datetime | None = None,
     ) -> "BronzeIngestionContext":
-        """Create a context; injectable time keeps tests deterministic."""
-
         return cls(
             ingestion_run_id=ingestion_run_id,
             ingestion_batch_number=ingestion_batch_number,
@@ -93,8 +91,6 @@ class BronzeIngestionContext:
 
     @property
     def ingestion_batch_id(self) -> str:
-        """Return a stable batch label inside an ingestion run."""
-
         return (
             f"{self.ingestion_run_id}"
             f"-batch-{self.ingestion_batch_number:06d}"
@@ -102,9 +98,20 @@ class BronzeIngestionContext:
 
     @property
     def ingestion_time_iso(self) -> str:
-        """Return ingestion time as canonical UTC text."""
+        return to_utc_iso_z(
+            self.ingestion_time
+        )
 
-        return to_utc_iso_z(self.ingestion_time)
+    @property
+    def processing_date(self) -> str:
+        """UTC date derived from ingestion_time."""
+
+        return (
+            self.ingestion_time
+            .astimezone(timezone.utc)
+            .date()
+            .isoformat()
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +250,8 @@ def build_bronze_envelope(
         "ingestion_time": (
             context.ingestion_time_iso
         ),
+        
+        "processing_date": context.processing_date,
 
         "source_record_id": (
             build_source_record_id(record)

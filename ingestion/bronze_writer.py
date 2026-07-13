@@ -23,6 +23,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable, Sequence
 from uuid import uuid4
+import re
+from datetime import date
 
 import boto3
 from botocore.client import BaseClient
@@ -54,7 +56,7 @@ class BronzeWriterConfig:
     access_key: str
     secret_key: str
     bucket: str = "lakehouse"
-    prefix: str = "bronze/events/_unpartitioned"
+    prefix: str = "bronze/events"
     region_name: str = "us-east-1"
 
     def __post_init__(self) -> None:
@@ -86,9 +88,8 @@ class BronzeWriterConfig:
         bucket = os.getenv("MINIO_BUCKET", "lakehouse")
         prefix = os.getenv(
             "BRONZE_PREFIX",
-            "bronze/events/_unpartitioned",
+            "bronze/events",
         )
-
         return cls(
             endpoint_url=endpoint_url,
             access_key=access_key,
@@ -115,6 +116,7 @@ class BronzeObjectWriteResult:
     ingestion_run_id: str
     ingestion_batch_id: str
     ingestion_time: str
+    processing_date: str
 
 def serialize_jsonl(
     records: Sequence[RawKafkaRecord],
@@ -143,24 +145,75 @@ def serialize_jsonl(
 
     return b"\n".join(lines) + b"\n"
 
+PROCESSING_DATE_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}$"
+)
+
+
+def validate_processing_date(
+    value: str,
+) -> str:
+    """Validate canonical YYYY-MM-DD processing date."""
+
+    if not PROCESSING_DATE_PATTERN.fullmatch(
+        value
+    ):
+        raise ValueError(
+            "processing_date must use YYYY-MM-DD"
+        )
+
+    try:
+        date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(
+            "processing_date must be a valid calendar date"
+        ) from exc
+
+    return value
 
 def build_object_key(
     *,
     prefix: str,
+    processing_date: str,
     topic: str,
     partition: int,
     start_offset: int,
     end_offset: int,
 ) -> str:
-    """Build a deterministic object key for one partition batch."""
+    """Build a deterministic processing-date Bronze object key."""
 
     clean_prefix = prefix.strip("/")
+    valid_date = validate_processing_date(
+        processing_date
+    )
+
+    if not topic.strip():
+        raise ValueError(
+            "topic must not be empty"
+        )
+
+    if partition < 0:
+        raise ValueError(
+            "partition must be zero or greater"
+        )
+
+    if start_offset < 0:
+        raise ValueError(
+            "start_offset must be zero or greater"
+        )
+
+    if end_offset < start_offset:
+        raise ValueError(
+            "end_offset must be >= start_offset"
+        )
 
     return (
         f"{clean_prefix}/"
+        f"processing_date={valid_date}/"
         f"topic={topic}/"
         f"partition={partition:05d}/"
-        f"offsets={start_offset:020d}-{end_offset:020d}.jsonl"
+        f"offsets={start_offset:020d}-"
+        f"{end_offset:020d}.jsonl"
     )
 
 
@@ -304,6 +357,9 @@ class BronzeWriter:
 
         object_key = build_object_key(
             prefix=self.config.prefix,
+            processing_date=(
+                context.processing_date
+            ),
             topic=topic,
             partition=partition,
             start_offset=start_offset,
@@ -311,9 +367,9 @@ class BronzeWriter:
         )
 
         body = serialize_jsonl(
-                records,
-                context=context,
-            )
+            records,
+            context=context,
+        )
         digest = hashlib.sha256(body).hexdigest()
 
         self.s3.put_object(
@@ -324,13 +380,25 @@ class BronzeWriter:
             ContentType="application/x-ndjson",
             Metadata={
                 "sha256": digest,
-                "record-count": str(len(records)),
+                "record-count": str(
+                    len(records)
+                ),
                 "source-topic": topic,
-                "source-partition": str(partition),
-                "start-offset": str(start_offset),
-                "end-offset": str(end_offset),
-                "record-version": "bronze-raw-v1",
-
+                "source-partition": str(
+                    partition
+                ),
+                "start-offset": str(
+                    start_offset
+                ),
+                "end-offset": str(
+                    end_offset
+                ),
+                "record-version": (
+                    "bronze-raw-v1"
+                ),
+                "processing-date": (
+                    context.processing_date
+                ),
                 "ingestion-run-id": (
                     context.ingestion_run_id
                 ),
@@ -348,27 +416,105 @@ class BronzeWriter:
             Key=object_key,
         )
 
-        actual_size = int(head["ContentLength"])
-        stored_metadata = head.get("Metadata", {})
-        actual_digest = stored_metadata.get("sha256")
+        actual_size = int(
+            head["ContentLength"]
+        )
+
+        stored_metadata = head.get(
+            "Metadata",
+            {},
+        )
+
+        actual_digest = stored_metadata.get(
+            "sha256"
+        )
+
+        actual_processing_date = stored_metadata.get(
+            "processing-date"
+        )
+
+        actual_ingestion_run_id = stored_metadata.get(
+            "ingestion-run-id"
+        )
+
+        actual_ingestion_batch_id = stored_metadata.get(
+            "ingestion-batch-id"
+        )
+
+        actual_ingestion_time = stored_metadata.get(
+            "ingestion-time"
+        )
 
         if actual_size != len(body):
             raise RuntimeError(
                 "Bronze object size verification failed: "
-                f"expected={len(body)}, actual={actual_size}, "
+                f"expected={len(body)}, "
+                f"actual={actual_size}, "
                 f"key={object_key}"
             )
 
         if actual_digest != digest:
             raise RuntimeError(
                 "Bronze object SHA-256 verification failed: "
-                f"expected={digest}, actual={actual_digest}, "
+                f"expected={digest}, "
+                f"actual={actual_digest}, "
+                f"key={object_key}"
+            )
+
+        if (
+            actual_processing_date
+            != context.processing_date
+        ):
+            raise RuntimeError(
+                "Bronze processing-date metadata "
+                "verification failed: "
+                f"expected={context.processing_date}, "
+                f"actual={actual_processing_date}, "
+                f"key={object_key}"
+            )
+
+        if (
+            actual_ingestion_run_id
+            != context.ingestion_run_id
+        ):
+            raise RuntimeError(
+                "Bronze ingestion-run-id metadata "
+                "verification failed: "
+                f"expected={context.ingestion_run_id}, "
+                f"actual={actual_ingestion_run_id}, "
+                f"key={object_key}"
+            )
+
+        if (
+            actual_ingestion_batch_id
+            != context.ingestion_batch_id
+        ):
+            raise RuntimeError(
+                "Bronze ingestion-batch-id metadata "
+                "verification failed: "
+                f"expected={context.ingestion_batch_id}, "
+                f"actual={actual_ingestion_batch_id}, "
+                f"key={object_key}"
+            )
+
+        if (
+            actual_ingestion_time
+            != context.ingestion_time_iso
+        ):
+            raise RuntimeError(
+                "Bronze ingestion-time metadata "
+                "verification failed: "
+                f"expected={context.ingestion_time_iso}, "
+                f"actual={actual_ingestion_time}, "
                 f"key={object_key}"
             )
 
         return BronzeObjectWriteResult(
             bucket=self.config.bucket,
             object_key=object_key,
+            processing_date=(
+                context.processing_date
+            ),
             topic=topic,
             partition=partition,
             start_offset=start_offset,
@@ -467,6 +613,7 @@ def consume_and_write_bronze(
             ingestion_run_id=context.ingestion_run_id,
             ingestion_batch_id=context.ingestion_batch_id,
             ingestion_time=context.ingestion_time_iso,
+            processing_date=context.processing_date,
             objects=[
                 {
                     "bucket": result.bucket,
@@ -478,6 +625,9 @@ def consume_and_write_bronze(
                     "record_count": result.record_count,
                     "size_bytes": result.size_bytes,
                     "sha256": result.sha256,
+                    "processing_date": (
+                        result.processing_date
+                    ),
                     "ingestion_run_id": (
                         result.ingestion_run_id
                     ),
