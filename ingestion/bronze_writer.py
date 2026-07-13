@@ -14,7 +14,6 @@ are added in later days.
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import json
 import logging
@@ -30,6 +29,11 @@ from botocore.client import BaseClient
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from confluent_kafka import KafkaException, TopicPartition
+
+from ingestion.bronze_metadata import (
+    BronzeIngestionContext,
+    build_bronze_envelope,
+)
 
 from ingestion.kafka_consumer import (
     KafkaConsumerConfig,
@@ -108,53 +112,28 @@ class BronzeObjectWriteResult:
     size_bytes: int
     sha256: str
 
-
-def encode_optional_bytes(
-    value: bytes | None,
-) -> str | None:
-    """Encode bytes as Base64 ASCII without losing information."""
-
-    if value is None:
-        return None
-
-    return base64.b64encode(value).decode("ascii")
-
-
-def raw_record_to_dict(
-    record: RawKafkaRecord,
-) -> dict[str, Any]:
-    """Convert a Kafka record into a JSON-safe Bronze envelope."""
-
-    return {
-        "record_version": "bronze-raw-v1",
-        "source_topic": record.topic,
-        "source_partition": record.partition,
-        "source_offset": record.offset,
-        "kafka_timestamp_type": record.kafka_timestamp_type,
-        "kafka_timestamp_ms": record.kafka_timestamp_ms,
-        "key_base64": encode_optional_bytes(record.key),
-        "value_base64": encode_optional_bytes(record.value),
-        "headers": [
-            {
-                "name": name,
-                "value_base64": encode_optional_bytes(value),
-            }
-            for name, value in record.headers
-        ],
-    }
-
+    ingestion_run_id: str
+    ingestion_batch_id: str
+    ingestion_time: str
 
 def serialize_jsonl(
     records: Sequence[RawKafkaRecord],
+    *,
+    context: BronzeIngestionContext,
 ) -> bytes:
-    """Serialize records as UTF-8 JSON Lines bytes."""
+    """Serialize Bronze envelopes as UTF-8 JSON Lines."""
 
     if not records:
-        raise ValueError("records must not be empty")
+        raise ValueError(
+            "records must not be empty"
+        )
 
     lines = [
         json.dumps(
-            raw_record_to_dict(record),
+            build_bronze_envelope(
+                record,
+                context=context,
+            ),
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -275,21 +254,33 @@ class BronzeWriter:
     def write_batch(
         self,
         records: Sequence[RawKafkaRecord],
+        *,
+        context: BronzeIngestionContext,
     ) -> list[BronzeObjectWriteResult]:
-        """Write one object per topic-partition represented in the batch."""
+        """Write one object per topic-partition."""
 
         if not records:
-            raise ValueError("records must not be empty")
+            raise ValueError(
+                "records must not be empty"
+            )
 
-        grouped = group_records_by_partition(records)
+        grouped = group_records_by_partition(
+            records
+        )
 
-        results: list[BronzeObjectWriteResult] = []
+        results: list[
+            BronzeObjectWriteResult
+        ] = []
 
-        for (topic, partition), partition_records in grouped.items():
+        for (
+            topic,
+            partition,
+        ), partition_records in grouped.items():
             result = self._write_partition_batch(
                 topic=topic,
                 partition=partition,
                 records=partition_records,
+                context=context,
             )
             results.append(result)
 
@@ -301,6 +292,7 @@ class BronzeWriter:
         topic: str,
         partition: int,
         records: Sequence[RawKafkaRecord],
+        context: BronzeIngestionContext,
     ) -> BronzeObjectWriteResult:
         """Write and verify one partition batch."""
 
@@ -318,7 +310,10 @@ class BronzeWriter:
             end_offset=end_offset,
         )
 
-        body = serialize_jsonl(records)
+        body = serialize_jsonl(
+                records,
+                context=context,
+            )
         digest = hashlib.sha256(body).hexdigest()
 
         self.s3.put_object(
@@ -335,6 +330,16 @@ class BronzeWriter:
                 "start-offset": str(start_offset),
                 "end-offset": str(end_offset),
                 "record-version": "bronze-raw-v1",
+
+                "ingestion-run-id": (
+                    context.ingestion_run_id
+                ),
+                "ingestion-batch-id": (
+                    context.ingestion_batch_id
+                ),
+                "ingestion-time": (
+                    context.ingestion_time_iso
+                ),
             },
         )
 
@@ -371,6 +376,16 @@ class BronzeWriter:
             record_count=len(records),
             size_bytes=len(body),
             sha256=digest,
+
+            ingestion_run_id=(
+                context.ingestion_run_id
+            ),
+            ingestion_batch_id=(
+                context.ingestion_batch_id
+            ),
+            ingestion_time=(
+                context.ingestion_time_iso
+            ),
         )
 def consume_and_write_bronze(
     *,
@@ -422,8 +437,16 @@ def consume_and_write_bronze(
 
         batch_number += 1
 
+        context = BronzeIngestionContext.create(
+            ingestion_run_id=run_id,
+            ingestion_batch_number=batch_number,
+        )
+
         # 1. Write every partition object.
-        results = writer.write_batch(buffer)
+        results = writer.write_batch(
+            buffer,
+            context=context,
+        )
 
         # 2. Only after all objects are verified, calculate
         #    the next offsets and commit them to Kafka.
@@ -441,6 +464,9 @@ def consume_and_write_bronze(
             batch_number=batch_number,
             record_count=len(buffer),
             object_count=len(results),
+            ingestion_run_id=context.ingestion_run_id,
+            ingestion_batch_id=context.ingestion_batch_id,
+            ingestion_time=context.ingestion_time_iso,
             objects=[
                 {
                     "bucket": result.bucket,
@@ -452,6 +478,15 @@ def consume_and_write_bronze(
                     "record_count": result.record_count,
                     "size_bytes": result.size_bytes,
                     "sha256": result.sha256,
+                    "ingestion_run_id": (
+                        result.ingestion_run_id
+                    ),
+                    "ingestion_batch_id": (
+                        result.ingestion_batch_id
+                    ),
+                    "ingestion_time": (
+                        result.ingestion_time
+                    ),
                 }
                 for result in results
             ],
@@ -599,6 +634,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
         default="INFO",
     )
+    parser.add_argument(
+        "--run-id",
+        default=None,
+        help=(
+            "Optional ingestion run ID. "
+            "A UUID-based ID is generated when omitted."
+        ),
+    )
 
     return parser
 
@@ -617,7 +660,16 @@ def main(
 
     configure_logging(args.log_level)
 
-    run_id = f"bronze-{uuid4()}"
+    run_id = (
+        args.run_id.strip()
+        if args.run_id
+        else f"bronze-{uuid4()}"
+    )
+
+    if not run_id:
+        parser.error(
+            "--run-id must not be empty"
+        )
 
     try:
         consumer_config = KafkaConsumerConfig(

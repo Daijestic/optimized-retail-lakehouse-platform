@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import base64
+from datetime import datetime, timezone
 
+from ingestion.bronze_metadata import (
+    BronzeIngestionContext,
+    build_bronze_envelope,
+)
 from ingestion.bronze_writer import (
     BronzeWriter,
     BronzeWriterConfig,
     build_commit_offsets,
     build_object_key,
-    raw_record_to_dict,
     serialize_jsonl,
 )
 from ingestion.kafka_consumer import RawKafkaRecord
-
 
 def make_record(
     *,
@@ -32,6 +36,17 @@ def make_record(
         headers=(),
     )
 
+def make_context() -> BronzeIngestionContext:
+    return BronzeIngestionContext.create(
+        ingestion_run_id="bronze-writer-test",
+        ingestion_batch_number=1,
+        now=datetime(
+            2026,
+            7,
+            13,
+            tzinfo=timezone.utc,
+        ),
+    )
 
 class FakeS3Client:
     def __init__(self) -> None:
@@ -80,13 +95,17 @@ def test_raw_record_keeps_malformed_payload_exactly() -> None:
     original = b'{"event_id":"broken"'
     record = make_record(value=original)
 
-    output = raw_record_to_dict(record)
+    output = build_bronze_envelope(
+        record,
+        context=make_context(),
+    )
 
     restored = base64.b64decode(
         output["value_base64"]
     )
 
     assert restored == original
+    assert output["payload_parse_status"] == "invalid_json"
 
 
 def test_object_key_is_deterministic() -> None:
@@ -121,7 +140,8 @@ def test_jsonl_has_one_line_per_record() -> None:
             make_record(offset=0),
             make_record(offset=1),
             make_record(offset=2),
-        ]
+        ],
+        context=make_context(),
     )
 
     lines = body.decode("utf-8").splitlines()
@@ -172,8 +192,29 @@ def test_writer_creates_one_object_per_partition() -> None:
             make_record(partition=0, offset=0),
             make_record(partition=0, offset=1),
             make_record(partition=1, offset=0),
-        ]
+        ],
+        context=make_context(),
     )
+
+    stored_objects = list(
+        fake_s3.objects.values()
+    )
+
+    for stored in stored_objects:
+        metadata = stored["Metadata"]
+
+        assert (
+            metadata["ingestion-run-id"]
+            == "bronze-writer-test"
+        )
+
+        assert (
+            metadata["ingestion-batch-id"]
+            == (
+                "bronze-writer-test-"
+                "batch-000001"
+            )
+        )
 
     assert len(results) == 2
     assert len(fake_s3.objects) == 2
@@ -206,8 +247,38 @@ def test_rewriting_same_range_uses_same_object_key() -> None:
         make_record(partition=0, offset=11),
     ]
 
-    first = writer.write_batch(records)
-    second = writer.write_batch(records)
+    context = make_context()
+
+    first = writer.write_batch(
+        records,
+        context=context,
+    )
+
+    second = writer.write_batch(
+        records,
+        context=context,
+    )
 
     assert first[0].object_key == second[0].object_key
     assert len(fake_s3.objects) == 1
+
+def test_jsonl_contains_ingestion_metadata() -> None:
+    body = serialize_jsonl(
+        [make_record(offset=10)],
+        context=make_context(),
+    )
+
+    row = json.loads(
+        body.decode("utf-8").splitlines()[0]
+    )
+
+    assert (
+        row["ingestion_run_id"]
+        == "bronze-writer-test"
+    )
+    assert row["ingestion_batch_number"] == 1
+    assert (
+        row["ingestion_batch_id"]
+        == "bronze-writer-test-batch-000001"
+    )
+    assert row["ingestion_time"].endswith("Z")

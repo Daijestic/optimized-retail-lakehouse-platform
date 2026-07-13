@@ -175,3 +175,61 @@ Object keys are deterministic from Kafka source ranges.
 - No event field parsing.
 - No replay command.
 - No full rebalance flush handling.
+---
+
+## Day 4 — Bronze Metadata and Audit Context
+
+### Metadata categories
+
+- Source metadata:
+  - source_topic
+  - source_partition
+  - source_offset
+  - source_record_id
+  - Kafka timestamp
+  - headers
+
+- Ingestion metadata:
+  - ingestion_run_id
+  - ingestion_batch_number
+  - ingestion_batch_id
+  - ingestion_time
+
+- Best-effort event metadata:
+  - event_id
+  - event_type
+  - event_time
+  - producer_time
+  - schema_version
+  - payload_parse_status
+
+### Time policy
+
+All ingestion timestamps are timezone-aware UTC values serialized as
+ISO-8601 text ending in `Z`.
+
+### Parse policy
+
+Bronze parsing is best-effort only.
+
+- malformed JSON is preserved;
+- invalid UTF-8 is preserved;
+- negative amount is not rejected;
+- unsupported schema version is not rejected;
+- raw Kafka bytes remain authoritative.
+
+### Live evidence
+
+- Ingestion run ID:
+- Record count:
+- Object count:
+- Parsed-object count:
+- Invalid-JSON count:
+- Consumer lag after run:
+
+### Current limitations
+
+- Historical Day 3 objects do not contain the additive Day 4 fields.
+- Object path is still under `_unpartitioned`.
+- `processing_date` partitioning is implemented on Day 5.
+- PostgreSQL ingestion-run metadata is deferred to hardening scope.
