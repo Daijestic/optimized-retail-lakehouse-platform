@@ -66,3 +66,4 @@ artifacts/day06/pytest-result.txt
 
 # Local Bronze replay artifacts
 artifacts/replay/
+artifacts/week02-final/

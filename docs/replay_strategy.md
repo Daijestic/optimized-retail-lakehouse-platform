@@ -373,3 +373,131 @@ Các phiên bản sau có thể bổ sung:
 - replay quality gate;
 - replay từ object version ID;
 - manifest có source object checksum đầy đủ.
+
+
+---
+
+## 16. Cách chạy
+
+Dry run:
+
+```bash
+python -m scripts.replay_bronze \
+  --processing-date YYYY-MM-DD \
+  --dry-run
+```
+
+Replay toàn bộ ngày:
+
+```bash
+python -m scripts.replay_bronze \
+  --processing-date YYYY-MM-DD \
+  --run-id replay-example
+```
+
+Replay một Kafka partition:
+
+```bash
+python -m scripts.replay_bronze \
+  --processing-date YYYY-MM-DD \
+  --partition 2 \
+  --output artifacts/replay/partition-2.jsonl
+```
+
+Ghi đè output local đã tồn tại:
+
+```bash
+python -m scripts.replay_bronze \
+  --processing-date YYYY-MM-DD \
+  --output artifacts/replay/replay.jsonl \
+  --overwrite
+```
+
+---
+
+## 17. Kết quả xác minh ngày 2026-07-14
+
+### 17.1. Dry run
+
+| Metric | Kết quả |
+|---|---|
+| Processing date | `2026-07-14` |
+| Object count | `3` |
+| Partition 0 | offsets `2550–2587`, 38 records |
+| Partition 1 | offsets `2010–2039`, 30 records |
+| Partition 2 | offsets `2144–2175`, 32 records |
+| Status | `dry_run` |
+
+### 17.2. Replay deterministic
+
+| Metric | Run A | Run B |
+|---|---|---|
+| Replay run ID | `replay-week02-final-2026-07-14-a` | `replay-week02-final-2026-07-14-b` |
+| Object count | `3` | `3` |
+| Record count | `100` | `100` |
+| Output size | `131396` bytes | `131396` bytes |
+| SHA-256 | `3c19549d2d93d14e7bb7ffd74253c33b8d7b7f2e3bad37c338ddaaf3989c16c4` | `3c19549d2d93d14e7bb7ffd74253c33b8d7b7f2e3bad37c338ddaaf3989c16c4` |
+
+Kết quả: **PASS**.
+
+### 17.3. Tính chỉ đọc
+
+Kafka consumer-group state trước và sau replay giống nhau:
+
+```text
+P0 = 2588
+P1 = 2040
+P2 = 2176
+LAG = 0
+```
+
+Bronze object count trước và sau replay:
+
+```text
+3 → 3
+```
+
+Kết quả:
+
+```text
+Kafka offsets unchanged = PASS
+Bronze object count unchanged = PASS
+```
+
+### 17.4. Negative tests
+
+- Ngày `2000-01-01` không có dữ liệu: `FileNotFoundError`.
+- Output đã tồn tại nhưng không có `--overwrite`: `FileExistsError`.
+- Có `--overwrite`: replay thành công và checksum không đổi.
+- Filter `--partition 2`: `1` object, `32` records, SHA-256 `00ab8cb3e174e530ed6513073943239f868f55ba23d39d953edbc28bf5e78c27`.
+
+---
+
+## 18. Phạm vi của bằng chứng snapshot
+
+Kết quả `3 objects / 100 records` được chụp trước failure-injection test.
+
+Sau đó, failure scenario và recovery ghi thêm object vào cùng:
+
+```text
+processing_date=2026-07-14
+```
+
+Vì vậy, chạy lại replay toàn bộ ngày sau thời điểm đó sẽ thấy nhiều object/record hơn và tạo checksum khác. Điều này không phá vỡ tính deterministic.
+
+Quy tắc đúng là:
+
+```text
+cùng source object snapshot
++ cùng filter
+→ cùng output checksum
+```
+
+Không nên hiểu là:
+
+```text
+cùng processing_date ở mọi thời điểm
+→ checksum luôn cố định
+```
+
+Nếu cần một replay snapshot bất biến trong tương lai, có thể bổ sung selector theo `ingestion_run_id`, source object manifest hoặc object version ID.

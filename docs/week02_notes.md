@@ -248,16 +248,25 @@ source_record_id = <topic>:<partition>:<offset>
 
 `source_record_id` định danh Kafka record. Nó khác với `event_id` vì controlled duplicate có thể cùng `event_id` nhưng nằm ở các Kafka offset khác nhau.
 
-### 5.7. Bằng chứng cần điền
+### 5.7. Bằng chứng đã xác minh
+
+Bằng chứng được lấy từ lần chạy nghiệm thu cuối ngày `2026-07-14`.
 
 | Metric | Kết quả |
 |---|---|
-| Ingestion run ID | |
-| Record count | |
-| Object count | |
-| `parsed_object` count | |
-| `invalid_json` count | |
-| Kafka lag sau run | |
+| Ingestion run ID | `bronze-week02-final-2026-07-14` |
+| Ingestion batch ID | `bronze-week02-final-2026-07-14-batch-000001` |
+| Ingestion time | `2026-07-14T07:58:59.458284Z` |
+| Record count | `100` |
+| Object count | `3` |
+| `parsed_object` count | `95` |
+| `invalid_json` count | `5` |
+| Duplicate event IDs | `10` |
+| Duplicate record excess | `10` |
+| Kafka lag sau run | `0` |
+| Kết quả | **PASS** |
+
+Các field metadata được kiểm tra trong từng row gồm `ingestion_run_id`, `processing_date`, `source_partition`, `source_offset` và `payload_parse_status`.
 
 ### 5.8. Ghi chú tương thích
 
@@ -350,16 +359,28 @@ Nếu cùng uncommitted Kafka range bị retry vào ngày UTC khác, at-least-on
 
 Downstream phải dùng source coordinates để reconciliation và deduplication.
 
-### 6.7. Bằng chứng cần điền
+### 6.7. Bằng chứng đã xác minh
 
 | Metric | Kết quả |
 |---|---|
-| Processing date | |
-| Ingestion run ID | |
-| Object count | |
-| Record count | |
-| Path/metadata/row consistency | |
-| Kafka lag sau ingestion | |
+| Processing date | `2026-07-14` |
+| Ingestion run ID | `bronze-week02-final-2026-07-14` |
+| Object count | `3` |
+| Record count | `100` |
+| Path/metadata/row consistency | **PASS** |
+| Kafka committed-offset delta | `100` |
+| Kafka lag sau ingestion | `0` |
+
+Phân bố source range:
+
+| Partition | Offset range | Records | Objects |
+|---:|---|---:|---:|
+| 0 | `2550–2587` | 38 | 1 |
+| 1 | `2010–2039` | 30 | 1 |
+| 2 | `2144–2175` | 32 | 1 |
+| **Tổng** | — | **100** | **3** |
+
+Các object key, object metadata và row metadata đều sử dụng cùng `processing_date=2026-07-14`.
 
 ---
 
@@ -387,28 +408,41 @@ Downstream phải dùng source coordinates để reconciliation và deduplicatio
 - output SHA-256;
 - tính deterministic của output.
 
-### 7.3. Bằng chứng cần điền
+### 7.3. Bằng chứng đã xác minh
+
+Bằng chứng replay dưới đây được chụp **trước** failure-injection test, tại thời điểm partition ngày `2026-07-14` có đúng ba object của final ingestion run.
 
 | Metric | Kết quả |
 |---|---|
-| Processing date | |
-| Replay run ID | |
-| Source object count | |
-| Replayed record count | |
-| Output path | |
-| Output SHA-256 | |
-| Kafka offsets trước replay | |
-| Kafka offsets sau replay | |
-| Bronze object count trước replay | |
-| Bronze object count sau replay | |
+| Processing date | `2026-07-14` |
+| Replay run ID A | `replay-week02-final-2026-07-14-a` |
+| Replay run ID B | `replay-week02-final-2026-07-14-b` |
+| Source object count | `3` |
+| Replayed record count | `100` |
+| Output size | `131396` bytes |
+| Output path A | `artifacts/replay/week02-final-a.jsonl` |
+| Output path B | `artifacts/replay/week02-final-b.jsonl` |
+| Output SHA-256 | `3c19549d2d93d14e7bb7ffd74253c33b8d7b7f2e3bad37c338ddaaf3989c16c4` |
+| Kafka offsets trước replay | P0=`2588`, P1=`2040`, P2=`2176` |
+| Kafka offsets sau replay | Không đổi |
+| Bronze object count trước replay | `3` |
+| Bronze object count sau replay | `3` |
+| Kết quả | **PASS** |
 
 ### 7.4. Determinism test
 
 | Kiểm tra | Kết quả |
 |---|---|
-| SHA-256 output lần 1 | |
-| SHA-256 output lần 2 | |
-| Hai hash giống nhau | |
+| SHA-256 output lần 1 | `3c19549d2d93d14e7bb7ffd74253c33b8d7b7f2e3bad37c338ddaaf3989c16c4` |
+| SHA-256 output lần 2 | `3c19549d2d93d14e7bb7ffd74253c33b8d7b7f2e3bad37c338ddaaf3989c16c4` |
+| Hai hash giống nhau | **PASS** |
+
+### 7.5. Negative tests đã xác minh
+
+- Replay ngày `2000-01-01` thất bại bằng `FileNotFoundError`.
+- Output đã tồn tại bị từ chối bằng `FileExistsError` khi không có `--overwrite`.
+- `--overwrite` ghi lại thành công và vẫn tạo cùng checksum.
+- Filter `--partition 2` tạo `1` object, `32` records và checksum `00ab8cb3e174e530ed6513073943239f868f55ba23d39d953edbc28bf5e78c27`.
 
 ### 7.5. Giới hạn hiện tại
 
@@ -421,13 +455,213 @@ Downstream phải dùng source coordinates để reconciliation và deduplicatio
 
 ---
 
-## 8. Công việc còn lại của Tuần 2
+## 8. Ngày 7 — Nghiệm thu và đóng Tuần 2
 
-- Chạy live replay theo `processing_date`.
-- Chứng minh replay không thay đổi Kafka offsets.
-- Chứng minh replay không thay đổi Bronze object count.
-- Chạy determinism test.
-- Chạy clean end-to-end verification cho toàn bộ Tuần 2.
-- Điền các bảng evidence còn trống.
-- Cập nhật command, count, checksum và limitation cuối cùng.
-- Hoàn thiện tài liệu và đóng Tuần 2.
+### 8.1. Trạng thái code và test
+
+| Kiểm tra | Kết quả |
+|---|---|
+| Python compile | **PASS** |
+| Test riêng phần Kafka/Bronze/replay | `38 passed in 1.02s` |
+| Toàn bộ test suite | `63 passed in 0.65s` |
+| Kiểm tra cuối sau cập nhật | `63 passed in 0.60s` |
+| `docker compose config` | **PASS** |
+| Kafka | Running, healthy |
+| MinIO | Running, healthy |
+| PostgreSQL | Running, healthy |
+| Spark | Running |
+| Airflow | Running |
+| Streamlit | Running |
+
+Commit nền trước khi cập nhật tài liệu:
+
+```text
+d8de484 feat(bronze): replay raw events by processing date
+```
+
+### 8.2. Kafka topic và baseline
+
+| Thuộc tính | Kết quả |
+|---|---|
+| Topic | `retail-payment-events` |
+| Partitions | `3` |
+| Replication factor | `1` |
+| Retention | `604800000 ms` |
+| Cleanup policy | `delete` |
+| Baseline committed offsets | P0=`2550`, P1=`2010`, P2=`2144` |
+| Baseline total committed | `6704` |
+| Baseline lag | `0` |
+
+### 8.3. Final producer run
+
+| Metric | Kết quả |
+|---|---|
+| Producer run ID | `producer-590820bd-5ae9-4914-9871-cf89ce50a38f` |
+| Random seed | `42` |
+| Event count | `100` |
+| Valid | `65` |
+| Duplicate | `10` |
+| Late | `10` |
+| Malformed | `5` |
+| Negative amount | `5` |
+| Unsupported schema version | `5` |
+| Delivery success | `100` |
+| Delivery failure | `0` |
+| Undelivered after flush | `0` |
+| Status | **success** |
+
+Sau producer, lag được phân bố:
+
+```text
+P0 = 38
+P1 = 30
+P2 = 32
+Tổng = 100
+```
+
+### 8.4. Final ingestion run
+
+| Metric | Kết quả |
+|---|---|
+| Processing date | `2026-07-14` |
+| Ingestion run ID | `bronze-week02-final-2026-07-14` |
+| Batch count | `1` |
+| Bronze record count | `100` |
+| Bronze object count | `3` |
+| `parsed_object` | `95` |
+| `invalid_json` | `5` |
+| Duplicate event IDs | `10` |
+| Duplicate record excess | `10` |
+| Committed-offset delta | `100` |
+| Total committed trước | `6704` |
+| Total committed sau | `6804` |
+| Final consumer lag | `0` |
+| Status | **PASS** |
+
+Committed offsets sau final ingestion:
+
+```text
+P0 = 2588
+P1 = 2040
+P2 = 2176
+```
+
+### 8.5. Replay verification
+
+| Metric | Kết quả |
+|---|---|
+| Replay processing date | `2026-07-14` |
+| Source object count | `3` |
+| Replayed record count | `100` |
+| Output size | `131396` bytes |
+| Output SHA-256 A | `3c19549d2d93d14e7bb7ffd74253c33b8d7b7f2e3bad37c338ddaaf3989c16c4` |
+| Output SHA-256 B | `3c19549d2d93d14e7bb7ffd74253c33b8d7b7f2e3bad37c338ddaaf3989c16c4` |
+| Hashes match | **PASS** |
+| Kafka offsets unchanged | **PASS** |
+| Bronze object count unchanged | **PASS** |
+| Missing-date negative test | **PASS** |
+| Existing-output protection | **PASS** |
+| Partition filter | **PASS** |
+
+> Snapshot replay ở trên được tạo trước failure-injection test. Sau failure test và recovery, cùng `processing_date=2026-07-14` có thêm object và record. Vì vậy replay lại toàn bộ ngày ở trạng thái hiện tại sẽ tạo count/checksum khác với snapshot `3 objects / 100 records` nêu trên.
+
+### 8.6. Failure injection và recovery
+
+Failure test thực tế diễn ra theo hai giai đoạn:
+
+1. Batch đầu tiên gồm `100` records được ghi và commit thành công.
+2. MinIO bị dừng trong lần flush tiếp theo; writer báo `EndpointConnectionError` và không commit phần dữ liệu đang thất bại.
+3. Recovery chạy lại cùng consumer group, đọc lại `200` records chưa commit, ghi thành `2` batch và `4` objects.
+4. Consumer group kết thúc ở trạng thái lag bằng `0`.
+
+Committed offsets sau batch đầu của failure scenario:
+
+```text
+P0 = 2626
+P1 = 2070
+P2 = 2208
+```
+
+Recovery bắt đầu từ đúng các vị trí trên và kết thúc tại:
+
+```text
+P0 = 2702
+P1 = 2130
+P2 = 2272
+LAG = 0
+```
+
+Kết quả chứng minh:
+
+```text
+output write thất bại
+→ phần dữ liệu chưa được commit
+→ restart cùng group đọc lại dữ liệu đó
+→ ghi thành công
+→ commit
+```
+
+Lưu ý: failure được inject sau khi một batch trước đó đã commit thành công; vì vậy đây không phải tình huống “toàn bộ failure run chưa commit”.
+
+### 8.7. Kiểm tra bảo mật và repository
+
+| Kiểm tra | Kết quả |
+|---|---|
+| `.env` được Git track | Không |
+| `simple_auth_manager_passwords.json` được Git track | Không |
+| `artifacts/replay/` bị ignore | Có |
+| `artifacts/week02-final/` bị ignore | Có |
+| Secret trong staged diff | Không phát hiện |
+| `BRONZE_PREFIX` | `bronze/events` |
+| `TODO/FIXME/NOT VERIFIED` | Không phát hiện |
+
+### 8.8. Cảnh báo bảo mật
+
+Lệnh `docker compose config` render cấu hình sau khi resolve biến môi trường, nên output đầy đủ có thể chứa password và credential. Trong lần nghiệm thu, output này đã hiển thị các giá trị nhạy cảm.
+
+Cần thực hiện:
+
+1. đổi toàn bộ password local đã bị lộ;
+2. không lưu hoặc chia sẻ output đầy đủ của `docker compose config`;
+3. khi chỉ cần validate cấu hình, dùng:
+
+```bash
+docker compose config --quiet
+```
+
+4. cân nhắc chuyển password sang Docker Compose secrets ở giai đoạn hardening.
+
+### 8.9. Kết luận Tuần 2
+
+Tuần 2 đã hoàn thành luồng:
+
+```text
+Producer
+→ Kafka
+→ raw consumer
+→ immutable Bronze JSONL
+→ ingestion metadata
+→ processing-date partition
+→ commit offset sau durable write
+→ read-only deterministic replay
+```
+
+Các bảo đảm đã có bằng chứng:
+
+- raw Kafka bytes được giữ bằng Base64;
+- source coordinates được giữ lại;
+- malformed và duplicate records không bị mất;
+- commit offset sử dụng `last_processed_offset + 1`;
+- lag cuối cùng bằng `0`;
+- replay không thay đổi Kafka offsets hoặc Bronze object count;
+- replay deterministic khi source snapshot không đổi;
+- failure trước commit cho phép dữ liệu được đọc lại.
+
+### 8.10. Giới hạn chuyển sang Tuần 3
+
+- At-least-once, không claim exactly-once.
+- Retry khác ngày có thể tạo cùng source range dưới processing date khác.
+- Replay chỉ hỗ trợ một processing date cho mỗi command.
+- Snapshot checksum phụ thuộc trạng thái object của ngày tại thời điểm replay.
+- Chưa có Silver validation, deduplication, late-event classification hoặc DLQ.
+- Rebalance-aware flushing và failure matrix rộng hơn được hoãn sang hardening.

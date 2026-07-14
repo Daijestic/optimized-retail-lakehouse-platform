@@ -360,15 +360,96 @@ Replay không thay đổi:
 - Bronze object;
 - nội dung Bronze record.
 
+Bằng chứng replay ngày `2026-07-14`:
+
+| Metric | Kết quả |
+|---|---|
+| Source objects | `3` |
+| Replayed records | `100` |
+| Output size | `131396` bytes |
+| SHA-256 lần 1 | `3c19549d2d93d14e7bb7ffd74253c33b8d7b7f2e3bad37c338ddaaf3989c16c4` |
+| SHA-256 lần 2 | `3c19549d2d93d14e7bb7ffd74253c33b8d7b7f2e3bad37c338ddaaf3989c16c4` |
+| Kafka offsets thay đổi | Không |
+| Bronze object count thay đổi | Không |
+| Kết quả | **PASS** |
+
+> Bằng chứng này là snapshot trước failure-injection test. Các object được ghi thêm sau đó làm thay đổi replay result của toàn bộ `processing_date=2026-07-14`.
+
 Xem thêm: `docs/replay_strategy.md`.
 
 ---
 
-## 16. Giới hạn hiện tại
+## 16. Bằng chứng nghiệm thu cuối Tuần 2
+
+### 16.1. Final ingestion run
+
+| Metric | Kết quả |
+|---|---|
+| Processing date | `2026-07-14` |
+| Run ID | `bronze-week02-final-2026-07-14` |
+| Records | `100` |
+| Objects | `3` |
+| `parsed_object` | `95` |
+| `invalid_json` | `5` |
+| Duplicate event IDs | `10` |
+| Committed-offset delta | `100` |
+| Final lag | `0` |
+| Status | **PASS** |
+
+Source ranges:
+
+```text
+partition 0: 2550–2587, 38 records
+partition 1: 2010–2039, 30 records
+partition 2: 2144–2175, 32 records
+```
+
+### 16.2. Failure injection
+
+Failure scenario cho thấy:
+
+```text
+một batch trước đó ghi và commit thành công
+→ MinIO mất kết nối trong lần flush kế tiếp
+→ writer thất bại bằng EndpointConnectionError
+→ phần dữ liệu chưa commit được đọc lại khi recovery
+→ recovery ghi 200 records trong 2 batches
+→ final lag = 0
+```
+
+Offsets sau batch cuối đã commit trước lỗi:
+
+```text
+P0 = 2626
+P1 = 2070
+P2 = 2208
+```
+
+Offsets sau recovery:
+
+```text
+P0 = 2702
+P1 = 2130
+P2 = 2272
+```
+
+Điều này phù hợp với ngữ nghĩa at-least-once: dữ liệu chưa được commit phải có khả năng được đọc lại.
+
+### 16.3. Test suite
+
+```text
+38 targeted Kafka/Bronze/replay tests passed
+63 full repository tests passed
+```
+
+---
+
+## 17. Giới hạn hiện tại
 
 - Các object dưới `_unpartitioned` dùng layout development cũ.
 - Production path chưa tải lại body của mọi object để kiểm tra checksum độc lập.
 - Replay MVP mới hỗ trợ một `processing_date` cho mỗi command.
-- Rebalance-aware flushing và failure-injection rộng hơn được để sang hardening.
+- Replay checksum là checksum của snapshot object tại thời điểm chạy, không phải checksum cố định vĩnh viễn cho một ngày có thể tiếp tục nhận object.
+- Rebalance-aware flushing và failure-injection matrix rộng hơn được để sang hardening.
 - Retry khác ngày có thể tạo cùng source range ở nhiều processing-date prefix.
 - PostgreSQL ingestion-run metadata được hoãn đến giai đoạn metadata hardening.

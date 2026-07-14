@@ -200,34 +200,106 @@ Kafka giữ event trong thời gian retention, kể cả khi consumer đã đọ
 
 ### 8.1. Bronze Layer
 
-Bronze lưu raw immutable events từ Apache Kafka KRaft.
+Bronze lưu raw immutable Kafka records dưới dạng JSON Lines trong MinIO.
 
-Bronze không sửa dữ liệu, không drop duplicate, không sửa schema lỗi.
+Bronze không:
 
-Mục tiêu:
+- drop duplicate;
+- drop malformed payload;
+- sửa raw bytes;
+- áp dụng business validation;
+- claim end-to-end exactly-once.
 
-- audit;
-- replay;
-- debug upstream;
-- trace source offset;
-- giữ bằng chứng dữ liệu gốc.
-
-Các field quan trọng:
+Luồng hiện tại:
 
 ```text
-event_id
-event_type
-raw_payload
+Kafka
+→ Python raw consumer
+→ Bronze metadata envelope
+→ processing-date object layout
+→ MinIO
+→ synchronous Kafka offset commit
+```
+
+Kafka key và value được giữ ở dạng bytes và mã hóa Base64 trong JSONL.
+
+Các field kỹ thuật chính:
+
+```text
+record_version
+ingestion_run_id
+ingestion_batch_number
+ingestion_batch_id
+ingestion_time
+processing_date
+source_record_id
 source_topic
 source_partition
 source_offset
+kafka_timestamp_type
+kafka_timestamp_ms
+key_base64
+value_base64
+headers
+payload_parse_status
+event_id
+event_type
 event_time
 producer_time
-ingestion_time
-processing_date
 schema_version
-ingestion_run_id
 ```
+
+`value_base64` là raw payload có tính thẩm quyền. Các event field chỉ được trích xuất theo best-effort để audit; Silver mới thực hiện business validation.
+
+Object layout:
+
+```text
+bronze/events/
+processing_date=<YYYY-MM-DD>/
+topic=<kafka-topic>/
+partition=<kafka-partition>/
+offsets=<start-offset>-<end-offset>.jsonl
+```
+
+Commit policy:
+
+```text
+ghi và kiểm tra tất cả object của batch thành công
+→ commit max_source_offset + 1 cho từng partition
+```
+
+Replay chỉ đọc được triển khai tại:
+
+```text
+scripts/replay_bronze.py
+```
+
+Tài liệu chi tiết:
+
+- [Bronze Layer](docs/bronze_layer.md)
+- [Bronze Replay Strategy](docs/replay_strategy.md)
+- [Week 2 Notes](docs/week02_notes.md)
+
+#### Kết quả nghiệm thu Tuần 2
+
+| Metric | Kết quả |
+|---|---|
+| Targeted Kafka/Bronze/replay tests | `38 passed` |
+| Full repository tests | `63 passed` |
+| Final producer events | `100` |
+| Final Bronze records | `100` |
+| Final Bronze objects | `3` |
+| `parsed_object` | `95` |
+| `invalid_json` | `5` |
+| Duplicate event IDs được giữ lại | `10` |
+| Committed-offset delta | `100` |
+| Final consumer lag | `0` |
+| Replay records | `100` |
+| Replay deterministic SHA-256 | `3c19549d2d93d14e7bb7ffd74253c33b8d7b7f2e3bad37c338ddaaf3989c16c4` |
+| Kafka offsets thay đổi bởi replay | Không |
+| Bronze object count thay đổi bởi replay | Không |
+
+Failure injection cũng đã chứng minh dữ liệu chưa commit được đọc lại sau khi MinIO hoạt động trở lại. Project vẫn mô tả chính xác delivery semantics là **at-least-once**.
 
 ### 8.2. Silver Layer
 
@@ -595,11 +667,13 @@ cp .env.example .env
 
 Điền credential local trong `.env`. Không commit `.env` hoặc các file password được sinh trong `orchestration/config/`.
 
-Kiểm tra cấu hình Compose:
+Kiểm tra cấu hình Compose mà không in toàn bộ cấu hình đã resolve:
 
 ```bash
-docker compose config
+docker compose config --quiet
 ```
+
+> Cảnh báo bảo mật: `docker compose config` không có `--quiet` sẽ render cấu hình sau khi nội suy biến môi trường và có thể hiển thị password/credential. Không dán output đầy đủ vào issue, tài liệu hoặc đoạn chat. Nếu credential đã bị lộ, cần đổi ngay. Ở giai đoạn hardening, nên chuyển secret sang Docker Compose secrets.
 
 ### 20.3. Khởi động local infrastructure
 
@@ -801,10 +875,70 @@ Tài liệu liên quan:
 - [Day 6 Producer Design](docs/day06_producer.md)
 - [Week 1 Closure Notes](docs/week01_notes.md)
 
-### 20.10. Commands thuộc các tuần tiếp theo
+### 20.10. Chạy Kafka → Bronze
+
+Nạp biến môi trường trong Git Bash:
 
 ```bash
-make ingest-bronze
+set -a
+source .env
+set +a
+```
+
+Gửi controlled events:
+
+```bash
+make producer-run
+```
+
+Chạy Bronze ingestion bằng consumer group ổn định:
+
+```bash
+python -m ingestion.bronze_writer \
+  --bootstrap-servers localhost:9092 \
+  --topic retail-payment-events \
+  --group-id bronze-ingestion-day03-v1 \
+  --client-id bronze-writer-local \
+  --run-id bronze-local-example \
+  --batch-size 100 \
+  --batch-wait-seconds 5 \
+  --max-messages 100 \
+  --idle-timeout-seconds 15
+```
+
+Kiểm tra consumer lag:
+
+```bash
+MSYS_NO_PATHCONV=1 docker compose exec -T kafka \
+  /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:19092 \
+  --describe \
+  --group bronze-ingestion-day03-v1
+```
+
+### 20.11. Replay Bronze theo `processing_date`
+
+Dry run:
+
+```bash
+python -m scripts.replay_bronze \
+  --processing-date YYYY-MM-DD \
+  --dry-run
+```
+
+Replay thật:
+
+```bash
+python -m scripts.replay_bronze \
+  --processing-date YYYY-MM-DD \
+  --run-id replay-local-example
+```
+
+Replay không reset Kafka offsets, không publish lại Kafka và không sửa Bronze objects.
+
+### 20.12. Commands thuộc các tuần tiếp theo
+
+```bash
 make process-silver
 make build-gold
 make run-benchmarks
@@ -813,9 +947,9 @@ make dashboard
 
 ## 21. Definition of Done cho MVP
 
-- [ ] Producer sinh valid/duplicate/late/malformed events
-- [ ] Apache Kafka KRaft nhận events
-- [ ] Bronze immutable + replay guide
+- [x] Producer sinh valid/duplicate/late/malformed events
+- [x] Apache Kafka KRaft nhận events
+- [x] Bronze immutable + replay guide
 - [ ] Silver có data quality checks
 - [ ] Silver có deduplication
 - [ ] Silver có late-event handling
@@ -823,15 +957,15 @@ make dashboard
 - [ ] Gold có metric definitions
 - [ ] Gold có correctness tests
 - [ ] Delta Lake tables chạy được
-- [ ] Benchmark methodology có từ tuần 1
+- [x] Benchmark methodology có từ tuần 1
 - [ ] Full refresh vs incremental benchmark
 - [ ] Small files vs compaction benchmark
 - [ ] Airflow DAG có retry/backfill/idempotency
 - [ ] Monitoring dashboard có freshness/quality/query_time/file_count
-- [ ] README có trade-off
-- [ ] README có dataset limitation
-- [ ] README có micro-batch near real-time explanation
-- [ ] pytest pass
+- [x] README có trade-off
+- [x] README có dataset limitation
+- [x] README có micro-batch near real-time explanation
+- [x] pytest pass
 - [ ] CI pass
 - [ ] Demo video 5–7 phút
 
@@ -862,3 +996,5 @@ Sau MVP, có thể mở rộng:
 - Apache Airflow Simple Auth Manager: https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/auth-manager/simple/
 - Databricks Medallion Architecture: https://www.databricks.com/blog/what-is-medallion-architecture
 - Streamlit Documentation: https://docs.streamlit.io/
+- Docker Compose Secrets: https://docs.docker.com/compose/how-tos/use-secrets/
+- Docker Compose Config: https://docs.docker.com/reference/cli/docker/compose/config/
